@@ -69,7 +69,38 @@ function rowToIncident(row: any, evidenceRows: any[] = []): Incident {
   };
 }
 
-// Database Schema Initialization (Blank Slate - no seeded mock incidents)
+// Helper: Reward points and update user profile stats in PostgreSQL
+async function rewardPoints(email: string, name: string, points: number, fieldToIncrement?: "reports_filed" | "evidence_submitted") {
+  const avatar = `https://images.unsplash.com/photo-${1500000000000 + Math.floor(Math.random() * 5000000)}?auto=format&fit=crop&q=80&w=100`;
+  
+  if (fieldToIncrement === "reports_filed") {
+    await pool.query(
+      `INSERT INTO users (email, name, avatar, points, reports_filed)
+       VALUES ($1, $2, $3, $4, 1)
+       ON CONFLICT (email) DO UPDATE 
+       SET name = $2, points = users.points + $4, reports_filed = users.reports_filed + 1`,
+      [email, name, avatar, points]
+    );
+  } else if (fieldToIncrement === "evidence_submitted") {
+    await pool.query(
+      `INSERT INTO users (email, name, avatar, points, evidence_submitted)
+       VALUES ($1, $2, $3, $4, 1)
+       ON CONFLICT (email) DO UPDATE 
+       SET name = $2, points = users.points + $4, evidence_submitted = users.evidence_submitted + 1`,
+      [email, name, avatar, points]
+    );
+  } else {
+    await pool.query(
+      `INSERT INTO users (email, name, avatar, points)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (email) DO UPDATE 
+       SET name = $2, points = users.points + $4`,
+      [email, name, avatar, points]
+    );
+  }
+}
+
+// Database Schema Initialization (Blank Slate - no seeded mock incidents, but seeds mock users for leaderboard)
 async function initDb() {
   try {
     // 1. Create schemas
@@ -112,8 +143,36 @@ async function initDb() {
         risk_zones JSONB NOT NULL,
         predicted_failures JSONB NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS users (
+        email VARCHAR(255) PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        avatar VARCHAR(512),
+        points INT NOT NULL DEFAULT 0,
+        reports_filed INT NOT NULL DEFAULT 0,
+        evidence_submitted INT NOT NULL DEFAULT 0
+      );
     `);
-    console.log("Database tables verified or created successfully (Blank Slate).");
+    console.log("Database tables verified or created successfully.");
+
+    // Seed mock competitor accounts for leaderboard if table is empty
+    const usersCheck = await pool.query("SELECT COUNT(*) FROM users");
+    if (Number(usersCheck.rows[0].count) === 0) {
+      console.log("Seeding competitor profiles into users table...");
+      const mockUsers = [
+        { email: "marcus@rome.net", name: "Marcus Aurelius", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=100", points: 820, reports_filed: 14, evidence_submitted: 22 },
+        { email: "tesla@grid.com", name: "Johnny Tesla", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=100", points: 415, reports_filed: 6, evidence_submitted: 12 },
+        { email: "clara@spokes.org", name: "Clara Cycle", avatar: "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&q=80&w=100", points: 120, reports_filed: 2, evidence_submitted: 4 }
+      ];
+
+      for (const u of mockUsers) {
+        await pool.query(
+          "INSERT INTO users (email, name, avatar, points, reports_filed, evidence_submitted) VALUES ($1, $2, $3, $4, $5, $6)",
+          [u.email, u.name, u.avatar, u.points, u.reports_filed, u.evidence_submitted]
+        );
+      }
+      console.log("Competitor profiles seeded successfully.");
+    }
   } catch (err) {
     console.error("Database initialization failed:", err);
   }
@@ -543,6 +602,41 @@ app.post("/api/upload", (req, res) => {
   }
 });
 
+// Gamification Leaderboard API
+app.get("/api/users/leaderboard", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT * FROM users ORDER BY points DESC");
+    res.json(result.rows);
+  } catch (err: any) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch leaderboard", details: err.message });
+  }
+});
+
+// User Profile Creation/Lookup API
+app.post("/api/users/profile", async (req, res) => {
+  const { email, name } = req.body;
+  if (!email || !name) {
+    return res.status(400).json({ error: "Email and name are required." });
+  }
+
+  try {
+    let result = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
+    if (result.rows.length === 0) {
+      const avatar = `https://images.unsplash.com/photo-${1500000000000 + Math.floor(Math.random() * 5000000)}?auto=format&fit=crop&q=80&w=100`;
+      await pool.query(
+        "INSERT INTO users (email, name, avatar, points) VALUES ($1, $2, $3, 0)",
+        [email, name, avatar]
+      );
+      result = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
+    }
+    res.json(result.rows[0]);
+  } catch (err: any) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch profile", details: err.message });
+  }
+});
+
 // 1. Get all incidents
 app.get("/api/incidents", async (req, res) => {
   try {
@@ -582,7 +676,7 @@ app.get("/api/incidents/:id", async (req, res) => {
   }
 });
 
-// 3. Create raw incident (Citizen Submission)
+// 3. Create raw incident (Citizen Submission) - Rewards 20 points
 app.post("/api/incidents", async (req, res) => {
   const { title, rawDescription, address, lat, lng, reporterName, reporterEmail, imageUrl } = req.body;
 
@@ -601,11 +695,15 @@ app.post("/api/incidents", async (req, res) => {
   const status = "SUBMITTED";
 
   try {
+    // 1. Save incident
     await pool.query(
       `INSERT INTO incidents (id, title, raw_description, lat, lng, address, reporter_name, reporter_email, reporter_avatar, created_at, status, image_url) 
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [id, title, rawDescription, latVal, lngVal, addr, name, email, avatar, createdAt, status, imageUrl || null]
     );
+
+    // 2. Reward points
+    await rewardPoints(email, name, 20, "reports_filed");
 
     const insertedResult = await pool.query("SELECT * FROM incidents WHERE id = $1", [id]);
     const incident = rowToIncident(insertedResult.rows[0], []);
@@ -668,16 +766,21 @@ app.post("/api/incidents/:id/analyze", async (req, res) => {
   }
 });
 
-// 5. Citizen Upvote/Downvote Community Verification
+// 5. Citizen Upvote/Downvote Community Verification - Rewards 5 points to the voter
 app.post("/api/incidents/:id/vote", async (req, res) => {
   try {
-    const { type } = req.body; // "up" or "down"
+    const { type, voterEmail, voterName } = req.body; // "up" or "down"
     if (type === "up") {
       await pool.query("UPDATE incidents SET upvotes = upvotes + 1 WHERE id = $1", [req.params.id]);
     } else if (type === "down") {
       await pool.query("UPDATE incidents SET downvotes = downvotes + 1 WHERE id = $1", [req.params.id]);
     }
     
+    // Reward points to voter if profile details are provided
+    if (voterEmail && voterName) {
+      await rewardPoints(voterEmail, voterName, 5);
+    }
+
     // Fetch updated incident
     const incidentResult = await pool.query("SELECT * FROM incidents WHERE id = $1", [req.params.id]);
     if (incidentResult.rows.length === 0) {
@@ -692,15 +795,16 @@ app.post("/api/incidents/:id/vote", async (req, res) => {
   }
 });
 
-// 6. Citizen Add Evidence / Comment
+// 6. Citizen Add Evidence / Comment - Rewards 10 points
 app.post("/api/incidents/:id/evidence", async (req, res) => {
-  const { author, text } = req.body;
+  const { author, text, commenterEmail } = req.body;
   if (!author || !text) {
     return res.status(400).json({ error: "Author and text are required to save evidence." });
   }
 
   const id = `ev-${Date.now()}`;
   const createdAt = new Date();
+  const email = commenterEmail || `${author.toLowerCase().replace(/\s+/g, '')}@citizen.net`;
 
   try {
     // Check if incident exists
@@ -714,6 +818,9 @@ app.post("/api/incidents/:id/evidence", async (req, res) => {
       "INSERT INTO evidence (id, incident_id, author, text, created_at) VALUES ($1, $2, $3, $4, $5)",
       [id, req.params.id, author, text, createdAt]
     );
+
+    // Reward points to commenter
+    await rewardPoints(email, author, 10, "evidence_submitted");
 
     // Fetch updated incident
     const incidentResult = await pool.query("SELECT * FROM incidents WHERE id = $1", [req.params.id]);

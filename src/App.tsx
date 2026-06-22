@@ -5,19 +5,14 @@ import AgentStatusPanel from "./components/AgentStatusPanel";
 import CitizenView from "./components/CitizenView";
 import OperatorView from "./components/OperatorView";
 import {
-  Compass,
-  Radio,
-  ArrowRight,
   ShieldCheck,
-  Play,
   RotateCw,
   Users,
   AlertCircle,
-  TrendingUp,
-  Sliders,
-  CheckCircle,
-  HelpCircle,
-  Layers
+  Layers,
+  Eye,
+  MapPin,
+  Trophy
 } from "lucide-react";
 
 export default function App() {
@@ -42,13 +37,23 @@ export default function App() {
   // Predictions refresh
   const [isRegeneratingPredictions, setIsRegeneratingPredictions] = React.useState(false);
 
-  // FETCH ALREADY PRE-SEEDED AND UPDATED CORES
+  // Gamification: user profile state
+  const [currentUser, setCurrentUser] = React.useState<{
+    email: string;
+    name: string;
+    avatar?: string;
+    points: number;
+    reports_filed: number;
+    evidence_submitted: number;
+  } | null>(null);
+
+  // Fetch all incidents and predictions
   const fetchAllData = async () => {
     setIsLoading(true);
     try {
       const incRes = await fetch("/api/incidents");
       if (!incRes.ok) throw new Error("Could not acquire municipal incidents list.");
-      const incs: Incident[] = await incRes.ok ? await incRes.json() : [];
+      const incs: Incident[] = await incRes.json();
       setIncidents(incs);
 
       // Auto-select first incident on mount if none selected
@@ -70,15 +75,34 @@ export default function App() {
     }
   };
 
+  // Fetch or create user profile in PostgreSQL
+  const fetchUserProfile = async (email: string, name: string) => {
+    try {
+      const res = await fetch("/api/users/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, name }),
+      });
+      if (res.ok) {
+        const profile = await res.json();
+        setCurrentUser(profile);
+      }
+    } catch (err) {
+      console.error("Failed to load user profile:", err);
+    }
+  };
+
   React.useEffect(() => {
     fetchAllData();
+    // Default active profile on boot
+    fetchUserProfile("citizen@metropolis.mail", "Sarah Connor");
   }, []);
 
   const selectIncident = (inc: Incident) => {
     setSelectedIncident(inc);
   };
 
-  // Run the 6-agent sequential AI process with visual delay ticks to model protocol
+  // Run the 6-agent sequential AI process
   const runAgentWorkflow = async () => {
     if (!selectedIncident) return;
     setIsAnalyzing(true);
@@ -120,6 +144,7 @@ export default function App() {
     lng: number;
     reporterName: string;
     reporterEmail: string;
+    imageUrl?: string;
   }) => {
     try {
       const res = await fetch("/api/incidents", {
@@ -132,6 +157,11 @@ export default function App() {
       setIncidents((prev) => [newInc, ...prev]);
       setSelectedIncident(newInc);
       setTempPin(null);
+
+      // Refresh current user profile points
+      if (currentUser) {
+        fetchUserProfile(currentUser.email, currentUser.name);
+      }
     } catch (err: any) {
       alert(err.message || "Failed to submit.");
     }
@@ -143,37 +173,55 @@ export default function App() {
       const res = await fetch(`/api/incidents/${id}/vote`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type }),
+        body: JSON.stringify({ 
+          type,
+          voterEmail: currentUser?.email || "anonymous@citizen.net",
+          voterName: currentUser?.name || "Anonymous Citizen"
+        }),
       });
       if (res.ok) {
         const updated: Incident = await res.json();
         setIncidents((prev) => prev.map((inc) => (inc.id === updated.id ? updated : inc)));
         setSelectedIncident(updated);
+
+        // Refresh points
+        if (currentUser) {
+          fetchUserProfile(currentUser.email, currentUser.name);
+        }
       }
     } catch (err) {
       console.error(err);
     }
   };
 
-  // Add grounds updates evidence
+  // Add ground evidence comment
   const handleAddEvidence = async (id: string, author: string, text: string) => {
     try {
       const res = await fetch(`/api/incidents/${id}/evidence`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ author, text }),
+        body: JSON.stringify({ 
+          author, 
+          text,
+          commenterEmail: currentUser?.email || "anonymous@citizen.net"
+        }),
       });
       if (res.ok) {
         const updated: Incident = await res.json();
         setIncidents((prev) => prev.map((inc) => (inc.id === updated.id ? updated : inc)));
         setSelectedIncident(updated);
+
+        // Refresh points
+        if (currentUser) {
+          fetchUserProfile(currentUser.email, currentUser.name);
+        }
       }
     } catch (err) {
       console.error(err);
     }
   };
 
-  // Municipal operator decision adjustment
+  // Municipal operator override
   const handleOperate = async (
     id: string,
     updates: {
@@ -201,7 +249,7 @@ export default function App() {
     }
   };
 
-  // Force system forecast re-computations (Prediction Agent)
+  // Force system forecast predictions
   const handleRegeneratePredictions = async () => {
     setIsRegeneratingPredictions(true);
     try {
@@ -219,7 +267,7 @@ export default function App() {
     }
   };
 
-  // Map pin picked in Citizen form mode
+  // Map pin selected
   const handleMapPinSelected = (lat: number, lng: number, address: string) => {
     setTempPin({ lat, lng, address });
   };
@@ -236,11 +284,23 @@ export default function App() {
             Civic<span className="text-blue-600">Mind</span>
           </span>
           <span className="ml-3 px-2 py-0.5 bg-slate-100 text-slate-500 text-[10px] font-bold uppercase tracking-widest rounded hidden sm:inline-block">
-            Mission Control v2.4
+            Mission Control v2.5
           </span>
         </div>
 
         <div className="flex items-center gap-6">
+          {currentUser && (
+            <div className="hidden sm:flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1 rounded-lg">
+              <Trophy className="w-4 h-4 text-amber-500" />
+              <div className="text-xs">
+                <span className="font-semibold text-slate-700">{currentUser.name}</span>
+                <span className="ml-1.5 px-1.5 py-0.5 bg-blue-150 text-blue-800 text-[9px] font-bold rounded font-mono uppercase">
+                  {currentUser.points} pts
+                </span>
+              </div>
+            </div>
+          )}
+
           <div className="hidden md:flex gap-6 items-center border-r border-slate-200 pr-6">
             <div className="text-right">
               <div className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">Health Score</div>
@@ -252,7 +312,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Core Multirole Toggle styled with Professional Polish aesthetic */}
+          {/* Core Multirole Toggle */}
           <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 shadow-inner">
             <button
               onClick={() => {
@@ -294,7 +354,7 @@ export default function App() {
           <div className="col-span-12 bg-rose-50 border border-rose-200 p-6 rounded-xl text-center max-w-md mx-auto my-12 space-y-3">
             <AlertCircle className="w-10 h-10 text-rose-500 mx-auto" />
             <h3 className="font-bold text-slate-800">Critical Error</h3>
-            <p className="text-xs text-slate-655">{errorMsg}</p>
+            <p className="text-xs text-slate-600">{errorMsg}</p>
             <button
               onClick={fetchAllData}
               className="px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-bold cursor-pointer"
@@ -304,9 +364,9 @@ export default function App() {
           </div>
         ) : (
           <>
-            {/* LEFT AREA: MAP AND AGENTS STREAM (7/12 layout) */}
+            {/* LEFT AREA: MAP AND AGENTS STREAM */}
             <section className="lg:col-span-7 flex flex-col gap-5">
-              {/* INTERACTIVE COMPREHENSIVE CITY VECTOR MAP */}
+              {/* INTERACTIVE LEAFLET MAP */}
               <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-3">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div>
@@ -314,11 +374,11 @@ export default function App() {
                       Metropolitan Spatial Grid Modeling
                     </h2>
                     <p className="text-[10px] text-slate-400">
-                      Double-click incidents to inspect. Toggle overlay zones to analyze forecasting patterns.
+                      Toggle overlay zones to analyze forecasting patterns. Locations resolve automatically on map load.
                     </p>
                   </div>
 
-                  <label className="inline-flex items-center gap-1.5 text-xs text-slate-655 font-semibold cursor-pointer select-none">
+                  <label className="inline-flex items-center gap-1.5 text-xs text-slate-600 font-semibold cursor-pointer select-none">
                     <input
                       type="checkbox"
                       checked={showRiskZones}
@@ -341,7 +401,7 @@ export default function App() {
                 />
               </div>
 
-              {/* AGENT STATUS & EXPLANATION TIMELINE CARD */}
+              {/* AGENT STATUS TIMELINE CARD */}
               {selectedIncident && (
                 <AgentStatusPanel
                   incident={selectedIncident}
@@ -352,7 +412,7 @@ export default function App() {
               )}
             </section>
 
-            {/* RIGHT AREA: ROLE SPECIFIC PANELS (5/12 layout) */}
+            {/* RIGHT AREA: ROLE SPECIFIC PANELS */}
             <section className="lg:col-span-5 flex flex-col gap-5">
               {activeRole === "citizen" ? (
                 <CitizenView
@@ -365,6 +425,8 @@ export default function App() {
                   isPinMode={isPinMode}
                   onTogglePinMode={() => setIsPinMode(!isPinMode)}
                   tempPin={tempPin}
+                  currentUser={currentUser}
+                  onProfileChange={fetchUserProfile}
                 />
               ) : (
                 <OperatorView
@@ -384,4 +446,3 @@ export default function App() {
     </div>
   );
 }
-

@@ -2,15 +2,16 @@ import React from "react";
 import { Incident } from "../types";
 import {
   PlusCircle,
-  FileText,
   MapPin,
   Send,
   ThumbsUp,
   ThumbsDown,
-  Paperclip,
   CheckCircle,
   MessageSquare,
-  AlertCircle,
+  Trophy,
+  Award,
+  ChevronRight,
+  User,
   Image as ImageIcon
 } from "lucide-react";
 
@@ -33,6 +34,15 @@ interface CitizenViewProps {
   isPinMode: boolean;
   onTogglePinMode: () => void;
   tempPin: { lat: number; lng: number; address: string } | null;
+  currentUser: {
+    email: string;
+    name: string;
+    avatar?: string;
+    points: number;
+    reports_filed: number;
+    evidence_submitted: number;
+  } | null;
+  onProfileChange: (email: string, name: string) => void;
 }
 
 export default function CitizenView({
@@ -45,8 +55,10 @@ export default function CitizenView({
   isPinMode,
   onTogglePinMode,
   tempPin,
+  currentUser,
+  onProfileChange,
 }: CitizenViewProps) {
-  const [activeTab, setActiveTab] = React.useState<"list" | "report">("list");
+  const [activeTab, setActiveTab] = React.useState<"list" | "report" | "leaderboard">("list");
 
   // Form State
   const [formData, setFormData] = React.useState({
@@ -57,7 +69,14 @@ export default function CitizenView({
     reporterEmail: "",
   });
 
-  // Evidence state
+  // Profile setup toggle/inputs inside leaderboard view
+  const [isEditingProfile, setIsEditingProfile] = React.useState(false);
+  const [profileForm, setProfileForm] = React.useState({
+    name: currentUser?.name || "Sarah Connor",
+    email: currentUser?.email || "citizen@metropolis.mail",
+  });
+
+  // Evidence comment inputs
   const [commenter, setCommenter] = React.useState("");
   const [commentText, setCommentText] = React.useState("");
   const [evidenceSuccess, setEvidenceSuccess] = React.useState(false);
@@ -67,7 +86,11 @@ export default function CitizenView({
   const [imagePreview, setImagePreview] = React.useState<string | null>(null);
   const [uploadedUrl, setUploadedUrl] = React.useState<string | null>(null);
 
-  // Sync temp map pin to form box
+  // Leaderboard data
+  const [leaderboard, setLeaderboard] = React.useState<any[]>([]);
+  const [isLoadingLeaderboard, setIsLoadingLeaderboard] = React.useState(false);
+
+  // Synchronize temp pin to address field
   React.useEffect(() => {
     if (tempPin) {
       setFormData((prev) => ({
@@ -76,6 +99,42 @@ export default function CitizenView({
       }));
     }
   }, [tempPin]);
+
+  // Sync edits if currentUser refreshes
+  React.useEffect(() => {
+    if (currentUser) {
+      setProfileForm({
+        name: currentUser.name,
+        email: currentUser.email,
+      });
+      // Also default commenter name to active user name
+      if (!commenter) {
+        setCommenter(currentUser.name);
+      }
+    }
+  }, [currentUser]);
+
+  // Fetch leaderboard data when leaderboard tab becomes active
+  const fetchLeaderboard = async () => {
+    setIsLoadingLeaderboard(true);
+    try {
+      const res = await fetch("/api/users/leaderboard");
+      if (res.ok) {
+        const data = await res.json();
+        setLeaderboard(data);
+      }
+    } catch (err) {
+      console.error("Leaderboard fetch error:", err);
+    } finally {
+      setIsLoadingLeaderboard(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (activeTab === "leaderboard") {
+      fetchLeaderboard();
+    }
+  }, [activeTab, currentUser]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -88,14 +147,12 @@ export default function CitizenView({
 
     setUploadingImage(true);
 
-    // Display local preview instantly
     const previewReader = new FileReader();
     previewReader.onloadend = () => {
       setImagePreview(previewReader.result as string);
     };
     previewReader.readAsDataURL(file);
 
-    // Read file content as base64 data URL and POST to upload API
     const uploadReader = new FileReader();
     uploadReader.onloadend = async () => {
       try {
@@ -130,12 +187,11 @@ export default function CitizenView({
       address: formData.address || "100 Broadway St, Metropolis",
       lat: tempPin?.lat || 37.7749 + (Math.random() - 0.5) * 0.02,
       lng: tempPin?.lng || -122.4194 + (Math.random() - 0.5) * 0.02,
-      reporterName: formData.reporterName || "Civic Citizen",
-      reporterEmail: formData.reporterEmail || "citizen@metropolis.mail",
+      reporterName: currentUser?.name || formData.reporterName || "Civic Citizen",
+      reporterEmail: currentUser?.email || formData.reporterEmail || "citizen@metropolis.mail",
       imageUrl: uploadedUrl || undefined,
     });
 
-    // Reset Form and file states
     setFormData({
       title: "",
       rawDescription: "",
@@ -154,16 +210,37 @@ export default function CitizenView({
     if (!selectedIncident || !commenter || !commentText) return;
 
     onAddEvidence(selectedIncident.id, commenter, commentText);
-    setCommenter("");
     setCommentText("");
     setEvidenceSuccess(true);
     setTimeout(() => setEvidenceSuccess(false), 3000);
   };
 
+  const handleProfileUpdateSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onProfileChange(profileForm.email, profileForm.name);
+    setIsEditingProfile(false);
+  };
+
+  // League details based on score
+  const getLeague = (pts: number) => {
+    if (pts >= 1000) return { name: "Diamond League", color: "from-cyan-500 to-blue-600 text-cyan-50 border-cyan-400/50 shadow-cyan-100", threshold: Infinity, next: null };
+    if (pts >= 400) return { name: "Platinum League", color: "from-indigo-500 to-purple-600 text-indigo-50 border-indigo-400/50 shadow-indigo-100", threshold: 1000, next: "Diamond" };
+    if (pts >= 150) return { name: "Gold League", color: "from-amber-400 to-orange-500 text-amber-50 border-amber-400/50 shadow-amber-100", threshold: 400, next: "Platinum" };
+    if (pts >= 50) return { name: "Silver League", color: "from-slate-300 to-slate-500 text-slate-50 border-slate-450/40 shadow-slate-100", threshold: 150, next: "Gold" };
+    return { name: "Bronze League", color: "from-amber-700 to-amber-900 text-amber-50 border-amber-900/20 shadow-amber-50", threshold: 50, next: "Silver" };
+  };
+
+  const pts = currentUser?.points || 0;
+  const league = getLeague(pts);
+  const prevThreshold = league.name === "Bronze League" ? 0 : league.name === "Silver League" ? 50 : league.name === "Gold League" ? 150 : league.name === "Platinum League" ? 400 : 1000;
+  const nextTarget = league.threshold;
+  const range = nextTarget - prevThreshold;
+  const progressPercent = nextTarget === Infinity ? 100 : Math.min(100, Math.max(0, ((pts - prevThreshold) / range) * 100));
+
   return (
     <div className="flex flex-col gap-5 h-full">
       {/* Sub tabs */}
-      <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
+      <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 shadow-inner">
         <button
           onClick={() => {
             setActiveTab("list");
@@ -173,7 +250,7 @@ export default function CitizenView({
             activeTab === "list" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-850"
           }`}
         >
-          Explore Active Grievances
+          Active Log
         </button>
         <button
           onClick={() => setActiveTab("report")}
@@ -182,7 +259,19 @@ export default function CitizenView({
           }`}
         >
           <PlusCircle className="w-3.5 h-3.5 text-blue-500" />
-          File New Complaint
+          New Report
+        </button>
+        <button
+          onClick={() => {
+            setActiveTab("leaderboard");
+            if (isPinMode) onTogglePinMode();
+          }}
+          className={`flex-1 text-center py-2 text-xs font-bold rounded-lg cursor-pointer transition-all flex items-center justify-center gap-1.5 ${
+            activeTab === "leaderboard" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-850"
+          }`}
+        >
+          <Trophy className="w-3.5 h-3.5 text-amber-500" />
+          Leagues
         </button>
       </div>
 
@@ -209,7 +298,7 @@ export default function CitizenView({
                     <div
                       key={inc.id}
                       onClick={() => onSelectIncident(inc)}
-                      className={`p-3.5 hover:bg-slate-50/70 transition-all cursor-pointer flex gap-3 items-start ${
+                      className={`p-3.5 hover:bg-slate-55/70 transition-all cursor-pointer flex gap-3 items-start ${
                         isSel ? "bg-blue-50/40 border-l-4 border-blue-600 shadow-sm" : "bg-white border-l-4 border-transparent"
                       }`}
                     >
@@ -338,7 +427,7 @@ export default function CitizenView({
             </div>
           )}
         </div>
-      ) : (
+      ) : activeTab === "report" ? (
         /* DISASTER FILING FORM */
         <form onSubmit={handleFormSubmit} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-4">
           <div className="border-b border-slate-100 pb-2 mb-2">
@@ -439,30 +528,33 @@ export default function CitizenView({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-slate-550 font-bold mb-1">Reporter Name</label>
-                <input
-                  type="text"
-                  name="reporterName"
-                  value={formData.reporterName}
-                  onChange={handleInputChange}
-                  placeholder="e.g., Sarah Connor"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-900"
-                />
+            {/* Profile reporter info if currentUser is not set */}
+            {!currentUser && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-550 font-bold mb-1">Reporter Name</label>
+                  <input
+                    type="text"
+                    name="reporterName"
+                    value={formData.reporterName}
+                    onChange={handleInputChange}
+                    placeholder="e.g., Sarah Connor"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-550 font-bold mb-1">Reporter Email</label>
+                  <input
+                    type="email"
+                    name="reporterEmail"
+                    value={formData.reporterEmail}
+                    onChange={handleInputChange}
+                    placeholder="e.g., sarah@sky.net"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-900"
+                  />
+                </div>
               </div>
-              <div>
-                <label className="block text-slate-550 font-bold mb-1">Reporter Email</label>
-                <input
-                  type="email"
-                  name="reporterEmail"
-                  value={formData.reporterEmail}
-                  onChange={handleInputChange}
-                  placeholder="e.g., sarah@sky.net"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-900"
-                />
-              </div>
-            </div>
+            )}
           </div>
 
           <button
@@ -476,6 +568,259 @@ export default function CitizenView({
             Launch AI Intake Agent Analysis
           </button>
         </form>
+      ) : (
+        /* LEADERBOARD & LEAGUES DASHBOARD */
+        <div className="space-y-4">
+          {/* User Profile League Status Badge */}
+          {currentUser && (
+            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <img
+                    src={currentUser.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=100"}
+                    alt={currentUser.name}
+                    className="w-10 h-10 rounded-full object-cover border border-slate-200"
+                  />
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-800">{currentUser.name}</h4>
+                    <p className="text-[10px] text-slate-400 font-mono">{currentUser.email}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsEditingProfile(!isEditingProfile)}
+                  className="px-2.5 py-1 text-[10px] font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded hover:bg-slate-100 cursor-pointer active:scale-95"
+                >
+                  {isEditingProfile ? "Cancel" : "Change User"}
+                </button>
+              </div>
+
+              {/* Editing user profile inside dashboard */}
+              {isEditingProfile && (
+                <form onSubmit={handleProfileUpdateSubmit} className="bg-slate-50 border border-slate-150 p-3 rounded-lg space-y-2.5">
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Profile Name</label>
+                      <input
+                        type="text"
+                        required
+                        value={profileForm.name}
+                        onChange={(e) => setProfileForm(prev => ({ ...prev, name: e.target.value }))}
+                        className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-slate-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Profile Email</label>
+                      <input
+                        type="email"
+                        required
+                        value={profileForm.email}
+                        onChange={(e) => setProfileForm(prev => ({ ...prev, email: e.target.value }))}
+                        className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-slate-400"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full py-1 bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] rounded cursor-pointer transition-colors"
+                  >
+                    Sync Profile
+                  </button>
+                </form>
+              )}
+
+              {/* Glassmorphic League Gradient card */}
+              <div className={`p-4 rounded-xl bg-gradient-to-br ${league.color} border shadow-md flex items-center justify-between`}>
+                <div>
+                  <span className="text-[9px] uppercase font-black tracking-widest opacity-80 flex items-center gap-1">
+                    <Award className="w-3.5 h-3.5 animate-pulse" /> Rank Tier
+                  </span>
+                  <h3 className="text-base font-black tracking-tight">{league.name}</h3>
+                  {league.next && (
+                    <p className="text-[10px] mt-1 font-semibold opacity-90">
+                      {league.threshold - pts} pts until {league.next} League
+                    </p>
+                  )}
+                </div>
+                <div className="text-right">
+                  <div className="text-[9px] uppercase font-bold opacity-75">Trophy Points</div>
+                  <div className="text-3xl font-black font-mono tracking-tight">{pts}</div>
+                </div>
+              </div>
+
+              {/* Progress Bar to next league */}
+              {league.next && (
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[9px] font-bold text-slate-400 font-mono">
+                    <span>{prevThreshold} pts</span>
+                    <span>{league.threshold} pts</span>
+                  </div>
+                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden border border-slate-200/50">
+                    <div
+                      className="h-full bg-blue-600 rounded-full transition-all duration-500"
+                      style={{ width: `${progressPercent}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* User statistics count */}
+              <div className="grid grid-cols-2 gap-3 border-t border-slate-100 pt-3 text-center">
+                <div className="bg-slate-50/70 p-2 rounded-lg border border-slate-100">
+                  <div className="text-[9px] font-bold text-slate-400 uppercase">Reports Filed</div>
+                  <div className="text-base font-bold text-slate-800">{currentUser.reports_filed}</div>
+                </div>
+                <div className="bg-slate-50/70 p-2 rounded-lg border border-slate-100">
+                  <div className="text-[9px] font-bold text-slate-400 uppercase">Evidence Sent</div>
+                  <div className="text-base font-bold text-slate-800">{currentUser.evidence_submitted}</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Leaderboard Table List */}
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+            <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-150 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+              City Citizen Leaderboard
+            </div>
+
+            {isLoadingLeaderboard ? (
+              <div className="p-6 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+                <span className="w-3.5 h-3.5 border-2 border-slate-300 border-t-slate-800 rounded-full animate-spin" />
+                Refreshed ranking data...
+              </div>
+            ) : leaderboard.length === 0 ? (
+              <div className="p-6 text-center text-xs text-slate-400">
+                No users found.
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100 max-h-56 overflow-y-auto">
+                {leaderboard.map((user, idx) => {
+                  const isCurrent = currentUser?.email === user.email;
+                  const rank = idx + 1;
+                  const userLeague = getLeague(user.points);
+
+                  let rankBadge = (
+                    <span className="w-5 h-5 rounded-full bg-slate-100 border border-slate-200 text-slate-500 flex items-center justify-center text-[10px] font-bold font-mono">
+                      {rank}
+                    </span>
+                  );
+                  if (rank === 1) {
+                    rankBadge = (
+                      <span className="w-5 h-5 rounded-full bg-amber-100 border border-amber-300 text-amber-600 flex items-center justify-center text-[10px] font-bold shadow-sm">
+                        👑
+                      </span>
+                    );
+                  } else if (rank === 2) {
+                    rankBadge = (
+                      <span className="w-5 h-5 rounded-full bg-slate-200 border border-slate-350 text-slate-600 flex items-center justify-center text-[10px] font-bold shadow-sm">
+                        🥈
+                      </span>
+                    );
+                  } else if (rank === 3) {
+                    rankBadge = (
+                      <span className="w-5 h-5 rounded-full bg-orange-100 border border-orange-200 text-orange-700 flex items-center justify-center text-[10px] font-bold shadow-sm">
+                        🥉
+                      </span>
+                    );
+                  }
+
+                  return (
+                    <div
+                      key={user.email}
+                      className={`p-3 flex items-center justify-between gap-3 hover:bg-slate-50/50 transition-colors ${
+                        isCurrent ? "bg-blue-50/30 font-semibold" : ""
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        {rankBadge}
+                        <img
+                          src={user.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=100"}
+                          alt={user.name}
+                          className="w-8 h-8 rounded-full object-cover border border-slate-150"
+                        />
+                        <div className="truncate">
+                          <div className="text-xs text-slate-800 flex items-center gap-1.5">
+                            <span className="truncate">{user.name}</span>
+                            {isCurrent && <span className="text-[8px] bg-blue-600 text-white px-1.5 py-0.2 rounded uppercase font-bold">You</span>}
+                          </div>
+                          <div className="text-[9px] text-slate-400 font-mono">{userLeague.name}</div>
+                        </div>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <span className="text-xs font-bold text-slate-800 font-mono">{user.points}</span>
+                        <span className="text-[9px] text-slate-400 ml-1">pts</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Achievement Milestones list */}
+          {currentUser && (
+            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-3">
+              <h4 className="text-xs font-bold text-slate-850 uppercase tracking-wide flex items-center gap-1">
+                <Award className="w-4 h-4 text-blue-500" /> Badge Milestones
+              </h4>
+              <div className="space-y-2">
+                {/* Achievement 1 */}
+                <div className={`p-2.5 rounded-lg border flex items-center justify-between transition-all ${
+                  currentUser.reports_filed > 0 ? "bg-emerald-50/40 border-emerald-250 text-emerald-900" : "bg-slate-50 border-slate-200 text-slate-400"
+                }`}>
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className={`text-lg ${currentUser.reports_filed > 0 ? "opacity-100" : "opacity-40 grayscale"}`}>🚨</span>
+                    <div>
+                      <div className="text-xs font-bold">First Responder</div>
+                      <p className="text-[10px] opacity-80">Filed at least one incident report</p>
+                    </div>
+                  </div>
+                  {currentUser.reports_filed > 0 ? (
+                    <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded uppercase">Unlocked</span>
+                  ) : (
+                    <span className="text-[9px] font-bold bg-slate-200 text-slate-500 px-2 py-0.5 rounded uppercase">Locked</span>
+                  )}
+                </div>
+
+                {/* Achievement 2 */}
+                <div className={`p-2.5 rounded-lg border flex items-center justify-between transition-all ${
+                  currentUser.evidence_submitted > 0 ? "bg-emerald-50/40 border-emerald-250 text-emerald-900" : "bg-slate-50 border-slate-200 text-slate-400"
+                }`}>
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className={`text-lg ${currentUser.evidence_submitted > 0 ? "opacity-100" : "opacity-40 grayscale"}`}>📸</span>
+                    <div>
+                      <div className="text-xs font-bold">Evidence Officer</div>
+                      <p className="text-[10px] opacity-80">Added auxiliary updates to logs</p>
+                    </div>
+                  </div>
+                  {currentUser.evidence_submitted > 0 ? (
+                    <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded uppercase">Unlocked</span>
+                  ) : (
+                    <span className="text-[9px] font-bold bg-slate-200 text-slate-500 px-2 py-0.5 rounded uppercase">Locked</span>
+                  )}
+                </div>
+
+                {/* Achievement 3 */}
+                <div className={`p-2.5 rounded-lg border flex items-center justify-between transition-all ${
+                  pts >= 150 ? "bg-emerald-50/40 border-emerald-250 text-emerald-900" : "bg-slate-50 border-slate-200 text-slate-400"
+                }`}>
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className={`text-lg ${pts >= 150 ? "opacity-100" : "opacity-40 grayscale"}`}>🛡️</span>
+                    <div>
+                      <div className="text-xs font-bold">Community Guard</div>
+                      <p className="text-[10px] opacity-80">Earned over 150 points (Gold League)</p>
+                    </div>
+                  </div>
+                  {pts >= 150 ? (
+                    <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded uppercase">Unlocked</span>
+                  ) : (
+                    <span className="text-[9px] font-bold bg-slate-200 text-slate-500 px-2 py-0.5 rounded uppercase">Locked</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
