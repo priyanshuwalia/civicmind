@@ -6,13 +6,12 @@ import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
 
 import type { Incident } from "./src/types";
-// @ts-ignore
-import admin from "firebase-admin";
+import * as admin from "firebase-admin";
 import { PrismaClient } from "@prisma/client";
 
 dotenv.config();
 
-const firebaseAdmin: any = admin;
+const firebaseAdmin: any = (admin as any).default || admin;
 const prisma = new PrismaClient();
 
 // Initialize Firebase Admin SDK for Authentication & Image Uploads
