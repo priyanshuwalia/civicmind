@@ -63,13 +63,33 @@ export default function CivicMap({
 
     mapRef.current = map;
 
-    // Geolocation: start at user's current location
+    // Geolocation: start at user's current location and drop a default pin
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
-        (position) => {
+        async (position) => {
           const { latitude, longitude } = position.coords;
           map.setView([latitude, longitude], 13);
           console.log(`Map centered on user location: ${latitude}, ${longitude}`);
+
+          // Trigger address resolution and pre-fill form
+          if (onMapPinSelected) {
+            onMapPinSelected(latitude, longitude, "Resolving current location address...");
+            try {
+              const response = await fetch(
+                `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}`
+              );
+              if (response.ok) {
+                const data = await response.json();
+                const address = data.display_name || data.name || `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+                onMapPinSelected(latitude, longitude, address);
+              } else {
+                onMapPinSelected(latitude, longitude, `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`);
+              }
+            } catch (err) {
+              console.error("Failed to reverse-geocode startup location:", err);
+              onMapPinSelected(latitude, longitude, `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`);
+            }
+          }
         },
         (error) => {
           console.warn("User geolocation denied or unavailable. Using default Metropolis center.", error);
@@ -209,7 +229,7 @@ export default function CivicMap({
     };
   }, [interactiveMode, onMapPinSelected]);
 
-  // 6. Synchronize temporary user-placed pin marker
+  // 6. Synchronize temporary user-placed pin marker (rendered always if tempPin exists)
   React.useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -219,7 +239,7 @@ export default function CivicMap({
       tempPinMarkerRef.current = null;
     }
 
-    if (interactiveMode === "pin" && tempPin) {
+    if (tempPin) {
       const size = 32;
       const customIcon = L.divIcon({
         html: `
@@ -240,7 +260,7 @@ export default function CivicMap({
       // Auto pan to the newly dropped pin
       map.panTo([tempPin.lat, tempPin.lng], { animate: true });
     }
-  }, [tempPin, interactiveMode]);
+  }, [tempPin]);
 
   return (
     <div className="relative w-full h-[450px] bg-slate-100 border border-slate-200 rounded-xl overflow-hidden shadow-sm">

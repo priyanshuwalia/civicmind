@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
@@ -12,7 +13,8 @@ const { Pool } = pg;
 const app = express();
 const PORT = 3000;
 
-app.use(express.json());
+// Set body size limit to 10mb to support base64 image uploads
+app.use(express.json({ limit: "10mb" }));
 
 // Initialize Gemini SDK with User-Agent telemetry
 const apiKey = process.env.GEMINI_API_KEY;
@@ -67,7 +69,7 @@ function rowToIncident(row: any, evidenceRows: any[] = []): Incident {
   };
 }
 
-// Database Schema and Seeding Initialization
+// Database Schema Initialization (Blank Slate - no seeded mock incidents)
 async function initDb() {
   try {
     // 1. Create schemas
@@ -111,307 +113,7 @@ async function initDb() {
         predicted_failures JSONB NOT NULL
       );
     `);
-    console.log("Database tables verified or created successfully.");
-
-    // 2. Seed incidents if table is empty
-    const incidentsCheck = await pool.query("SELECT COUNT(*) FROM incidents");
-    if (Number(incidentsCheck.rows[0].count) === 0) {
-      console.log("Database is empty. Seeding initial incidents...");
-      
-      const seedIncidents = [
-        {
-          id: "inc-1",
-          title: "Major Water Main Rupture",
-          rawDescription: "Water is shooting up 10 feet in the air from the middle of the road. It has flooded the sidewalk and traffic is completely backed up. Looks like asphalt has cracked wide open.",
-          location: {
-            lat: 37.7794,
-            lng: -122.4132,
-            address: "850 Grand Ave, Metropolis"
-          },
-          reporter: {
-            name: "Marcus Aurelius",
-            email: "marcus@rome.net",
-            avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=100"
-          },
-          createdAt: new Date(Date.now() - 3600000 * 24).toISOString(),
-          status: "RESOLVING",
-          upvotes: 43,
-          downvotes: 1,
-          evidence: [
-            {
-              id: "ev-1",
-              author: "Sarah Connor",
-              text: "City water pressure dropped significantly in adjacent blocks. Water is starting to seep into parking garages.",
-              createdAt: new Date(Date.now() - 3600000 * 20).toISOString()
-            }
-          ],
-          intake: {
-            issue_type: "Water & Sewage",
-            severity: 5,
-            confidence: 0.98,
-            location_desc: "Main urban arterial road (Grand Ave) experiencing high hydraulic pressure rupture.",
-            detailed_description: "Critical water utility failure resulting in street flooding and erosion potential beneath the asphalt layer.",
-            agentThought: "Intake Agent: Analyzed keywords 'water shooting 10 feet', 'flooded sidewalk', 'asphalt cracked'. Elevated to severity 5 due to life safety risk, infrastructure damage, and widespread transport blockages. Category set as Water & Sewage."
-          },
-          verification: {
-            verified: true,
-            duplicate_group: null,
-            confidence: 0.95,
-            agentThought: "Verification Agent: Cross-checked with existing logs. No duplicate water line reports on 800-900 Grand Ave in the past 12 hours. Community reports (43 upvotes) confirm authenticity of incident instantly."
-          },
-          impact: {
-            impact_score: 5,
-            affected_population: 8500,
-            reasoning: "Grand Ave is a high-density commercial strip. Outage affects water pressure for 14 residential buildings and 2 office parks, risking local school water shut-off.",
-            agentThought: "Impact Agent: Correlated location with municipal GIS density metrics. Evaluated density factor high (Score: 5/5) and registered hospital and school proximity indicators within 500m."
-          },
-          prioritization: {
-            priority_score: 14.5,
-            priority_rank: "CRITICAL",
-            escalation_level: 3,
-            agentThought: "Prioritization Agent: Severity (5) + Impact (5) + Verification Conf (0.95 * 2 = 1.9) + Age Factor (2.6) = 14.5. Priority Rank upgraded to CRITICAL. Escalation level 3: Full dispatch required."
-          },
-          resolution: {
-            department: "Water & Sewerage Authority",
-            recommended_action: "Expose main valve cluster to isolate the broken 12-inch pipe. Shut down water feeds from block 800 to 900. Deploy vacuum pump truck and asphalt crew for road repair.",
-            estimated_cost: 12500,
-            estimated_duration: "8 hours",
-            approvedByOperator: true,
-            operatorOverridden: false,
-            agentThought: "Resolution Agent: Estimated based on 12-inch municipal standard piping repair logs. Sledge, vacuum, and crew costs set to standard municipal rates."
-          }
-        },
-        {
-          id: "inc-2",
-          title: "Large Sinkhole Developing",
-          rawDescription: "A massive depression has appeared right near the crosswalk of Lincoln Elementary School. You can see hollow soil underneath, it is definitely going to collapse soon if a heavy vehicle drives over it.",
-          location: {
-            lat: 37.7699,
-            lng: -122.4468,
-            address: "105 Pine St, Metropolis"
-          },
-          reporter: {
-            name: "Helen Park",
-            email: "helen@helen.dev",
-            avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=100"
-          },
-          createdAt: new Date(Date.now() - 3600000 * 4).toISOString(),
-          status: "PRIORITIZED",
-          upvotes: 28,
-          downvotes: 0,
-          evidence: [],
-          intake: {
-            issue_type: "Road Infrastructure",
-            severity: 4,
-            confidence: 0.94,
-            location_desc: "Urban school crosswalk intersection, prone to young pedestrian traffic.",
-            detailed_description: "Structural subsurface soil erosion resulting in sinkhole formation underneath suburban road carriage way.",
-            agentThought: "Intake Agent: Categorized as Road Infrastructure. Severity evaluated at 4 due to proximity to elementary school, which raises ped risks. Rapid degradation suspected."
-          },
-          verification: {
-            verified: true,
-            duplicate_group: null,
-            confidence: 0.91,
-            agentThought: "Verification Agent: Confirmed location validity. Real-time GIS coordinates overlap actual school zone. No concurrent duplicate tickets registered."
-          },
-          impact: {
-            impact_score: 5,
-            affected_population: 1200,
-            reasoning: "Located literally in the drop-off zone of Lincoln Elementary. High concentrations of school buses and parent vehicles present. Risk of structural tire trap or pedestrian collapse is high.",
-            agentThought: "Impact Agent: Flagged immediate high-impact vulnerability due to school-zone proximity (within 10m). Pop scale calculated at 1,200 containing students and staff."
-          },
-          prioritization: {
-            priority_score: 11.2,
-            priority_rank: "HIGH",
-            escalation_level: 2,
-            agentThought: "Prioritization Agent: Formula: Severity (4) + Impact (5) + Conf (0.91 * 2 = 1.8) + Age (0.4) = 11.2. Escalated to HIGH priority level. Suggest immediate barricade installation."
-          },
-          resolution: {
-            department: "Department of Transportation",
-            recommended_action: "Establish emergency cones and barricades blocking the eastern lane. Backfill subterranean void with flowable fill concrete, then reconstruct gravel bed and sub-base and pave asphalt.",
-            estimated_cost: 4800,
-            estimated_duration: "24 hours",
-            approvedByOperator: false,
-            operatorOverridden: false,
-            agentThought: "Resolution Agent: Factored expedited concrete curing rates and safety barricade crew logistics."
-          }
-        },
-        {
-          id: "inc-3",
-          title: "Sparks Flying from Power Transformer",
-          rawDescription: "The green power box on the side of the road is making extremely loud buzzing noises and blue sparks are popping out of the top vent. Neighbors are saying their lights are flickering.",
-          location: {
-            lat: 37.7858,
-            lng: -122.4008,
-            address: "1420 Battery St, Metropolis"
-          },
-          reporter: {
-            name: "Johnny Tesla",
-            email: "tesla@grid.com",
-            avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=100"
-          },
-          createdAt: new Date(Date.now() - 3600000 * 1).toISOString(),
-          status: "VERIFIED",
-          upvotes: 12,
-          downvotes: 0,
-          evidence: [],
-          intake: {
-            issue_type: "Power & Grid",
-            severity: 4,
-            confidence: 0.96,
-            location_desc: "Residential sector street-level distribution padmount transformer box.",
-            detailed_description: "Active electrical arcing on distribution transformer, manifesting audible noise and visible sparks. Risk of combustion.",
-            agentThought: "Intake Agent: Sparks and power flickering imply severe electrical fire hazard. Category designated: Power & Grid. Severity: 4."
-          },
-          verification: {
-            verified: true,
-            duplicate_group: null,
-            confidence: 0.89,
-            agentThought: "Verification Agent: Smart-meter telemetry logs in the area confirm local voltage drop in accordance with report timeframe. Verified."
-          }
-        },
-        {
-          id: "inc-4",
-          title: "Large Tree branch blocking bicycle lane",
-          rawDescription: "A huge oak tree branch broke off and has fallen entirely across the bicycle highway lane. Bikers are having to swerve out into standard fast-moving car traffic to get around it.",
-          location: {
-            lat: 37.7558,
-            lng: -122.4208,
-            address: "240 Riverfront Trail, Metropolis"
-          },
-          reporter: {
-            name: "Clara Cycle",
-            email: "clara@spokes.org",
-            avatar: "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&q=80&w=100"
-          },
-          createdAt: new Date().toISOString(),
-          status: "SUBMITTED",
-          upvotes: 3,
-          downvotes: 0,
-          evidence: []
-        }
-      ];
-
-      for (const inc of seedIncidents) {
-        await pool.query(
-          `INSERT INTO incidents (
-            id, title, raw_description, lat, lng, address, 
-            reporter_name, reporter_email, reporter_avatar, created_at, status, 
-            upvotes, downvotes, intake, verification, impact, prioritization, resolution
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
-          [
-            inc.id,
-            inc.title,
-            inc.rawDescription,
-            inc.location.lat,
-            inc.location.lng,
-            inc.location.address,
-            inc.reporter.name,
-            inc.reporter.email,
-            inc.reporter.avatar,
-            new Date(inc.createdAt),
-            inc.status,
-            inc.upvotes,
-            inc.downvotes,
-            inc.intake ? JSON.stringify(inc.intake) : null,
-            inc.verification ? JSON.stringify(inc.verification) : null,
-            inc.impact ? JSON.stringify(inc.impact) : null,
-            inc.prioritization ? JSON.stringify(inc.prioritization) : null,
-            inc.resolution ? JSON.stringify(inc.resolution) : null
-          ]
-        );
-
-        for (const ev of inc.evidence) {
-          await pool.query(
-            `INSERT INTO evidence (id, incident_id, author, text, created_at)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [ev.id, inc.id, ev.author, ev.text, new Date(ev.createdAt)]
-          );
-        }
-      }
-      console.log("Incidents seeded successfully into Postgres.");
-    }
-
-    // 3. Seed predictions if empty
-    const predictionsCheck = await pool.query("SELECT COUNT(*) FROM predictions");
-    if (Number(predictionsCheck.rows[0].count) === 0) {
-      console.log("Predictions table is empty. Seeding initial predictions...");
-      
-      const seedPredictions = {
-        confidence_scores: 0.85,
-        generatedAt: new Date().toISOString(),
-        agentThought: "Prediction Agent: Synthesized historical storm damage, water pressure anomalies, and cable age charts. Generated three highly critical risk zones based on local density and infrastructure ages.",
-        risk_zones: [
-          {
-            id: "rz-1",
-            zone: "Grand Boulevard Corridor",
-            risk_score: 88,
-            primary_vulnerability: "Corroded Water Mains and High-Stress Commercial Loading",
-            lat: 37.7794,
-            lng: -122.4132,
-            radius: 400
-          },
-          {
-            id: "rz-2",
-            zone: "Lincoln Heights Educational Area",
-            risk_score: 72,
-            primary_vulnerability: "Road Soil Creep and Tree Root Pavement Distortions",
-            lat: 37.7699,
-            lng: -122.4468,
-            radius: 300
-          },
-          {
-            id: "rz-3",
-            zone: "Riverfront Delta Pathway",
-            risk_score: 64,
-            primary_vulnerability: "Severe Overhang Foliage Breakage Risks and Silt Erosion",
-            lat: 37.7558,
-            lng: -122.4208,
-            radius: 250
-          }
-        ],
-        predicted_failures: [
-          {
-            id: "pf-1",
-            item: "Water Conduit Burst (80-yr old pipeline)",
-            estimate_time: "Within 45 Days",
-            confidence: 0.84,
-            category: "Water & Sewage",
-            location: "700 Grand Ave, adjacent block to active leak"
-          },
-          {
-            id: "pf-2",
-            item: "Substation Thermal Overload",
-            estimate_time: "During next high-temperature day",
-            confidence: 0.76,
-            category: "Power & Grid",
-            location: "Lincoln Substation Sector 3B"
-          },
-          {
-            id: "pf-3",
-            item: "Pedestrian Walkway Cavity Collapse",
-            estimate_time: "Within 2 Weeks",
-            confidence: 0.68,
-            category: "Road Infrastructure",
-            location: "Pine & 4th Street Crosswalk"
-          }
-        ]
-      };
-
-      await pool.query(
-        `INSERT INTO predictions (id, confidence_scores, generated_at, agent_thought, risk_zones, predicted_failures)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [
-          "pred-1",
-          seedPredictions.confidence_scores,
-          new Date(seedPredictions.generatedAt),
-          seedPredictions.agentThought,
-          JSON.stringify(seedPredictions.risk_zones),
-          JSON.stringify(seedPredictions.predicted_failures)
-        ]
-      );
-      console.log("Predictions seeded successfully into Postgres.");
-    }
+    console.log("Database tables verified or created successfully (Blank Slate).");
   } catch (err) {
     console.error("Database initialization failed:", err);
   }
@@ -497,7 +199,7 @@ function runSimulatedAgentPipeline(incident: Incident, otherIncidents: Incident[
     const imp = current.impact?.impact_score || 3;
     const ver = current.verification?.confidence || 0.85;
     
-    // Priority = Severity + Impact + Verification Confidence * 2 + Age Factor (1.2)
+    // Priority = Severity + Impact + Verification Confidence * 2 + Age factor (1.2)
     const priority_score = parseFloat((sev + imp + ver * 2 + 1.2).toFixed(1));
     let priority_rank: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" = "MEDIUM";
     let escalation_level = 1;
@@ -800,6 +502,47 @@ async function runRealGeminiAgentPipeline(incident: Incident, otherIncidents: In
 
 // --- ENDPOINTS ---
 
+// File Upload Endpoint (base64)
+app.post("/api/upload", (req, res) => {
+  const { image } = req.body;
+  if (!image) {
+    return res.status(400).json({ error: "No image payload provided" });
+  }
+
+  try {
+    const matches = image.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+    if (!matches || matches.length !== 3) {
+      return res.status(400).json({ error: "Invalid base64 payload format" });
+    }
+
+    const fileBuffer = Buffer.from(matches[2], "base64");
+    const extension = matches[1].split("/")[1];
+    const filename = `upload-${Date.now()}.${extension}`;
+    
+    // Store in public/uploads for Vite dev server routing
+    const uploadsDir = path.join(process.cwd(), "public", "uploads");
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+
+    fs.writeFileSync(path.join(uploadsDir, filename), fileBuffer);
+    
+    // Also store in dist/uploads if production folder exists
+    const prodUploadsDir = path.join(process.cwd(), "dist", "uploads");
+    if (fs.existsSync(path.join(process.cwd(), "dist"))) {
+      if (!fs.existsSync(prodUploadsDir)) {
+        fs.mkdirSync(prodUploadsDir, { recursive: true });
+      }
+      fs.writeFileSync(path.join(prodUploadsDir, filename), fileBuffer);
+    }
+
+    res.json({ imageUrl: `/uploads/${filename}` });
+  } catch (err: any) {
+    console.error("File upload failed:", err);
+    res.status(500).json({ error: "Failed to upload image", details: err.message });
+  }
+});
+
 // 1. Get all incidents
 app.get("/api/incidents", async (req, res) => {
   try {
@@ -841,7 +584,7 @@ app.get("/api/incidents/:id", async (req, res) => {
 
 // 3. Create raw incident (Citizen Submission)
 app.post("/api/incidents", async (req, res) => {
-  const { title, rawDescription, address, lat, lng, reporterName, reporterEmail } = req.body;
+  const { title, rawDescription, address, lat, lng, reporterName, reporterEmail, imageUrl } = req.body;
 
   if (!title || !rawDescription) {
     return res.status(400).json({ error: "Title and rawDescription are required fields." });
@@ -859,9 +602,9 @@ app.post("/api/incidents", async (req, res) => {
 
   try {
     await pool.query(
-      `INSERT INTO incidents (id, title, raw_description, lat, lng, address, reporter_name, reporter_email, reporter_avatar, created_at, status) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-      [id, title, rawDescription, latVal, lngVal, addr, name, email, avatar, createdAt, status]
+      `INSERT INTO incidents (id, title, raw_description, lat, lng, address, reporter_name, reporter_email, reporter_avatar, created_at, status, image_url) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [id, title, rawDescription, latVal, lngVal, addr, name, email, avatar, createdAt, status, imageUrl || null]
     );
 
     const insertedResult = await pool.query("SELECT * FROM incidents WHERE id = $1", [id]);
@@ -869,7 +612,7 @@ app.post("/api/incidents", async (req, res) => {
     res.status(201).json(incident);
   } catch (err: any) {
     console.error(err);
-    res.status(500).json({ error: "Failed to save incident", details: err.message });
+    res.status(500).json({ error: "Failed to save incident to database", details: err.message });
   }
 });
 
@@ -1210,7 +953,7 @@ app.post("/api/predictions/regenerate", async (req, res) => {
 
 // START EXPRESS/VITE INBOUND LOGIC
 async function start() {
-  // Initialize Database Tables and Seeds
+  // Initialize Database Tables (Blank Slate - no seeding)
   await initDb();
 
   if (process.env.NODE_ENV !== "production") {

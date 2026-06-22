@@ -10,7 +10,8 @@ import {
   Paperclip,
   CheckCircle,
   MessageSquare,
-  AlertCircle
+  AlertCircle,
+  Image as ImageIcon
 } from "lucide-react";
 
 interface CitizenViewProps {
@@ -25,6 +26,7 @@ interface CitizenViewProps {
     lng: number;
     reporterName: string;
     reporterEmail: string;
+    imageUrl?: string;
   }) => void;
   onVote: (id: string, type: "up" | "down") => void;
   onAddEvidence: (id: string, author: string, text: string) => void;
@@ -60,6 +62,11 @@ export default function CitizenView({
   const [commentText, setCommentText] = React.useState("");
   const [evidenceSuccess, setEvidenceSuccess] = React.useState(false);
 
+  // Upload state
+  const [uploadingImage, setUploadingImage] = React.useState(false);
+  const [imagePreview, setImagePreview] = React.useState<string | null>(null);
+  const [uploadedUrl, setUploadedUrl] = React.useState<string | null>(null);
+
   // Sync temp map pin to form box
   React.useEffect(() => {
     if (tempPin) {
@@ -75,6 +82,44 @@ export default function CitizenView({
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingImage(true);
+
+    // Display local preview instantly
+    const previewReader = new FileReader();
+    previewReader.onloadend = () => {
+      setImagePreview(previewReader.result as string);
+    };
+    previewReader.readAsDataURL(file);
+
+    // Read file content as base64 data URL and POST to upload API
+    const uploadReader = new FileReader();
+    uploadReader.onloadend = async () => {
+      try {
+        const response = await fetch("/api/upload", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ image: uploadReader.result }),
+        });
+        if (!response.ok) throw new Error("Image upload failed");
+        const data = await response.json();
+        setUploadedUrl(data.imageUrl);
+      } catch (err) {
+        console.error("Upload error:", err);
+        alert("Failed to upload image. Please try again.");
+        setImagePreview(null);
+      } finally {
+        setUploadingImage(false);
+      }
+    };
+    uploadReader.readAsDataURL(file);
+  };
+
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.title || !formData.rawDescription) return;
@@ -87,9 +132,10 @@ export default function CitizenView({
       lng: tempPin?.lng || -122.4194 + (Math.random() - 0.5) * 0.02,
       reporterName: formData.reporterName || "Civic Citizen",
       reporterEmail: formData.reporterEmail || "citizen@metropolis.mail",
+      imageUrl: uploadedUrl || undefined,
     });
 
-    // Reset Form
+    // Reset Form and file states
     setFormData({
       title: "",
       rawDescription: "",
@@ -97,6 +143,8 @@ export default function CitizenView({
       reporterName: "",
       reporterEmail: "",
     });
+    setImagePreview(null);
+    setUploadedUrl(null);
     if (isPinMode) onTogglePinMode();
     setActiveTab("list");
   };
@@ -200,6 +248,14 @@ export default function CitizenView({
                     ID: {selectedIncident.id}
                   </span>
                 </div>
+
+                {/* Render Incident Photo evidence if it exists */}
+                {selectedIncident.imageUrl && (
+                  <div className="w-full h-48 bg-slate-50 border border-slate-200 rounded-lg overflow-hidden shadow-inner flex items-center justify-center mb-3">
+                    <img src={selectedIncident.imageUrl} alt={selectedIncident.title} className="object-cover w-full h-full" />
+                  </div>
+                )}
+
                 <p className="text-xs text-slate-600 bg-slate-50 border border-slate-100 p-3 rounded-lg leading-relaxed">
                   {selectedIncident.rawDescription}
                 </p>
@@ -317,6 +373,42 @@ export default function CitizenView({
               />
             </div>
 
+            {/* Evidence Image Upload Field */}
+            <div>
+              <label className="block text-slate-550 font-bold mb-1 flex items-center gap-1">
+                <ImageIcon className="w-3.5 h-3.5 text-blue-500" />
+                Evidence Photo (Optional)
+              </label>
+              <div className="flex items-center gap-3">
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageUpload}
+                  className="block w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-900 file:text-white file:cursor-pointer hover:file:bg-slate-800"
+                />
+                {uploadingImage && (
+                  <span className="text-[10px] text-yellow-600 font-semibold animate-pulse flex-shrink-0">
+                    Uploading...
+                  </span>
+                )}
+              </div>
+              {imagePreview && (
+                <div className="mt-3 relative w-full h-32 bg-slate-50 border border-slate-200 rounded-lg overflow-hidden flex items-center justify-center">
+                  <img src={imagePreview} alt="Upload preview" className="object-cover w-full h-full" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImagePreview(null);
+                      setUploadedUrl(null);
+                    }}
+                    className="absolute top-1.5 right-1.5 bg-red-500 hover:bg-red-650 text-white rounded-full px-2 py-0.5 text-[9px] font-bold cursor-pointer shadow-md active:scale-95 transition-transform"
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label className="block text-slate-550 font-bold">Physical Address / Sector *</label>
@@ -375,7 +467,10 @@ export default function CitizenView({
 
           <button
             type="submit"
-            className="w-full mt-4 py-2.5 bg-slate-900 text-white rounded-lg font-bold text-xs hover:bg-slate-800 transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
+            disabled={uploadingImage}
+            className={`w-full mt-4 py-2.5 rounded-lg font-bold text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95 ${
+              uploadingImage ? "bg-slate-400 text-slate-100 cursor-not-allowed" : "bg-slate-900 text-white hover:bg-slate-800"
+            }`}
           >
             <Send className="w-3.5 h-3.5" />
             Launch AI Intake Agent Analysis
