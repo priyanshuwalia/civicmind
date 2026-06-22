@@ -16,17 +16,18 @@ import {
   Mail,
   Lock
 } from "lucide-react";
-import { auth } from "./firebase";
-import {
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut,
-  onAuthStateChanged,
-  User
-} from "firebase/auth";
+
+type PortalUser = {
+  email: string;
+  name: string;
+  role: "citizen" | "operator";
+};
+
+const createPortalToken = (user: PortalUser) =>
+  `civicmind.${btoa(JSON.stringify(user)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
 
 export default function App() {
-  const [firebaseUser, setFirebaseUser] = React.useState<User | null>(null);
+  const [firebaseUser, setFirebaseUser] = React.useState<PortalUser | null>(null);
   const [authToken, setAuthToken] = React.useState<string | null>(null);
   const [currentUser, setCurrentUser] = React.useState<{
     email: string;
@@ -73,24 +74,22 @@ export default function App() {
 
   // Track Auth state changes
   React.useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setAuthChecking(true);
-      if (user) {
-        try {
-          const token = await user.getIdToken();
-          setAuthToken(token);
-          setFirebaseUser(user);
-        } catch (e) {
-          console.error("Error getting user token:", e);
-        }
-      } else {
-        setFirebaseUser(null);
-        setAuthToken(null);
-        setCurrentUser(null);
-        setAuthChecking(false);
-      }
-    });
-    return () => unsubscribe();
+    const saved = localStorage.getItem("civicmind.portalUser");
+    if (!saved) {
+      setAuthChecking(false);
+      return;
+    }
+
+    try {
+      const user = JSON.parse(saved) as PortalUser;
+      const token = createPortalToken(user);
+      setFirebaseUser(user);
+      setAuthToken(token);
+      fetchUserProfile(token, user.email, user.name, user.role);
+    } catch {
+      localStorage.removeItem("civicmind.portalUser");
+      setAuthChecking(false);
+    }
   }, []);
 
   // Fetch or create user profile on backend
@@ -120,7 +119,7 @@ export default function App() {
   React.useEffect(() => {
     if (firebaseUser && authToken) {
       // If we just registered, we pass authForm details. Otherwise just fetch.
-      fetchUserProfile(authToken, firebaseUser.email || "", authForm.name || undefined, authForm.role || undefined);
+      fetchUserProfile(authToken, firebaseUser.email || "", firebaseUser.name || authForm.name || undefined, firebaseUser.role || authForm.role || undefined);
     }
   }, [firebaseUser, authToken]);
 
@@ -352,30 +351,41 @@ export default function App() {
     setAuthLoading(true);
 
     try {
-      if (isLogin) {
-        await signInWithEmailAndPassword(auth, authForm.email, authForm.password);
-      } else {
-        if (!authForm.name.trim()) throw new Error("Full Name is required for signup.");
-        await createUserWithEmailAndPassword(auth, authForm.email, authForm.password);
-      }
+      if (!authForm.email.trim()) throw new Error("Email is required.");
+      if (!authForm.password.trim()) throw new Error("Security key is required.");
+
+      const portalUser: PortalUser = {
+        email: authForm.email.trim(),
+        name:
+          authForm.name.trim() ||
+          authForm.email
+            .split("@")[0]
+            .replace(/[._-]+/g, " ")
+            .replace(/\b\w/g, (char) => char.toUpperCase()) ||
+          "CivicMind User",
+        role: authForm.role,
+      };
+      const token = createPortalToken(portalUser);
+      localStorage.setItem("civicmind.portalUser", JSON.stringify(portalUser));
+      setFirebaseUser(portalUser);
+      setAuthToken(token);
+      await fetchUserProfile(token, portalUser.email, portalUser.name, portalUser.role);
     } catch (err: any) {
       console.error(err);
-      let msg = err.message || "Authentication failed.";
-      if (err.code === "auth/user-not-found" || err.code === "auth/wrong-password" || err.code === "auth/invalid-credential") {
-        msg = "Invalid email or password credentials.";
-      } else if (err.code === "auth/email-already-in-use") {
-        msg = "This email is already in use.";
-      } else if (err.code === "auth/weak-password") {
-        msg = "Password should be at least 6 characters.";
-      }
-      setAuthError(msg);
+      setAuthError(err.message || "Authentication failed.");
     } finally {
       setAuthLoading(false);
     }
   };
 
-  const handleLogout = async () => {
-    await signOut(auth);
+  const handleLogout = () => {
+    localStorage.removeItem("civicmind.portalUser");
+    setFirebaseUser(null);
+    setAuthToken(null);
+    setCurrentUser(null);
+    setIncidents([]);
+    setPredictionData(null);
+    setAuthChecking(false);
   };
 
   // Auth Gate Interface

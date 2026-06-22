@@ -1,6 +1,5 @@
 import React from "react";
 import { Incident } from "../types";
-import { auth } from "../firebase";
 import {
   PlusCircle,
   MapPin,
@@ -15,6 +14,12 @@ import {
   User,
   Image as ImageIcon
 } from "lucide-react";
+
+const getPortalToken = () => {
+  const saved = localStorage.getItem("civicmind.portalUser");
+  if (!saved) return "civicmind.e30";
+  return `civicmind.${btoa(saved).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
+};
 
 interface CitizenViewProps {
   incidents: Incident[];
@@ -119,7 +124,7 @@ export default function CitizenView({
   const fetchLeaderboard = async () => {
     setIsLoadingLeaderboard(true);
     try {
-      const token = await auth.currentUser?.getIdToken();
+      const token = getPortalToken();
       const res = await fetch("/api/users/leaderboard", {
         headers: {
           "Authorization": `Bearer ${token}`
@@ -162,7 +167,7 @@ export default function CitizenView({
     const uploadReader = new FileReader();
     uploadReader.onloadend = async () => {
       try {
-        const token = await auth.currentUser?.getIdToken();
+        const token = getPortalToken();
         const response = await fetch("/api/upload", {
           method: "POST",
           headers: {

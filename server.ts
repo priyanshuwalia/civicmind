@@ -6,65 +6,166 @@ import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
 
 import type { Incident } from "./src/types";
-import {
-  applicationDefault,
-  cert as firebaseCert,
-  getApps,
-  initializeApp,
-} from "firebase-admin/app";
-import { getAuth } from "firebase-admin/auth";
-import { getStorage } from "firebase-admin/storage";
 import { PrismaClient } from "@prisma/client";
 
 dotenv.config();
 
-const prisma = new PrismaClient();
+function createMemoryPrisma() {
+  const now = new Date();
+  const users: any[] = [];
+  const evidence: any[] = [];
+  const incidents: any[] = [
+    {
+      id: "inc-demo-1",
+      title: "Water main leak near transit corridor",
+      rawDescription:
+        "Large water leak has started flooding the curb lane and pedestrian crossing near the station entrance.",
+      imageUrl: null,
+      lat: 37.7794,
+      lng: -122.4184,
+      address: "Grand Boulevard & 10th Ave, Metropolis",
+      reporterName: "Maya Patel",
+      reporterEmail: "maya@civicmind.demo",
+      reporterAvatar:
+        "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=100",
+      createdAt: now,
+      status: "SUBMITTED",
+      upvotes: 7,
+      downvotes: 0,
+      intake: null,
+      verification: null,
+      impact: null,
+      prioritization: null,
+      resolution: null,
+    },
+    {
+      id: "inc-demo-2",
+      title: "Fallen tree blocking school sidewalk",
+      rawDescription:
+        "A large branch is blocking the sidewalk outside the school gate and students are walking into the road.",
+      imageUrl: null,
+      lat: 37.7735,
+      lng: -122.4215,
+      address: "Market Street West School Gate, Metropolis",
+      reporterName: "Jordan Lee",
+      reporterEmail: "jordan@civicmind.demo",
+      reporterAvatar:
+        "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100",
+      createdAt: new Date(now.getTime() - 1000 * 60 * 40),
+      status: "SUBMITTED",
+      upvotes: 4,
+      downvotes: 0,
+      intake: null,
+      verification: null,
+      impact: null,
+      prioritization: null,
+      resolution: null,
+    },
+  ];
+  const predictions: any[] = [];
 
-// Initialize Firebase Admin SDK for Authentication & Image Uploads
-if (getApps().length === 0) {
-  const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
-  if (serviceAccount) {
-    try {
-      const serviceAccountCert = JSON.parse(serviceAccount);
-      initializeApp({
-        credential: firebaseCert(serviceAccountCert),
-        storageBucket:
-          process.env.FIREBASE_STORAGE_BUCKET ||
-          (serviceAccountCert.project_id
-            ? `${serviceAccountCert.project_id}.appspot.com`
-            : undefined),
-      });
-      console.log("Firebase Admin initialized via service account.");
-    } catch (err) {
-      console.error(
-        "Failed to parse FIREBASE_SERVICE_ACCOUNT JSON, fallback to default credentials:",
-        err,
-      );
-      try {
-        initializeApp({
-          credential: applicationDefault(),
-          projectId: process.env.VITE_FIREBASE_PROJECT_ID || "mock-project",
-          storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-        });
-      } catch (innerErr) {
-        console.error(
-          "Firebase fallback initialization failed, using default credentials config:",
-          innerErr,
-        );
-        initializeApp({
-          projectId: process.env.VITE_FIREBASE_PROJECT_ID || "mock-project",
-          storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-        });
+  const withEvidence = (inc: any) => ({
+    ...inc,
+    evidence: evidence
+      .filter((ev) => ev.incidentId === inc.id)
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()),
+  });
+
+  const applyUserUpdate = (user: any, data: any) => {
+    Object.entries(data || {}).forEach(([key, value]: any) => {
+      if (value && typeof value === "object" && "increment" in value) {
+        user[key] = (user[key] || 0) + Number(value.increment || 0);
+      } else {
+        user[key] = value;
       }
-    }
-  } else {
-    initializeApp({
-      projectId: process.env.VITE_FIREBASE_PROJECT_ID || "mock-project",
-      storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
     });
-    console.log("Firebase Admin initialized via default / project ID.");
-  }
+    return user;
+  };
+
+  const applyIncidentUpdate = (inc: any, data: any) => {
+    Object.entries(data || {}).forEach(([key, value]: any) => {
+      if (value && typeof value === "object" && "increment" in value) {
+        inc[key] = (inc[key] || 0) + Number(value.increment || 0);
+      } else {
+        inc[key] = value;
+      }
+    });
+    return inc;
+  };
+
+  return {
+    user: {
+      count: async () => users.length,
+      createMany: async ({ data }: any) => {
+        users.push(...data.map((user: any) => ({ ...user })));
+        return { count: data.length };
+      },
+      findUnique: async ({ where }: any) =>
+        users.find((user) => user.email === where.email) || null,
+      findMany: async () => [...users].sort((a, b) => b.points - a.points),
+      create: async ({ data }: any) => {
+        const user = { ...data };
+        users.push(user);
+        return user;
+      },
+      upsert: async ({ where, update, create }: any) => {
+        let user = users.find((item) => item.email === where.email);
+        if (user) return applyUserUpdate(user, update);
+        user = { ...create };
+        users.push(user);
+        return user;
+      },
+    },
+    incident: {
+      findMany: async ({ where, include, orderBy }: any = {}) => {
+        let list = [...incidents];
+        if (where?.id?.not) list = list.filter((inc) => inc.id !== where.id.not);
+        if (orderBy?.createdAt === "desc") {
+          list.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+        }
+        return include?.evidence ? list.map(withEvidence) : list;
+      },
+      findUnique: async ({ where, include }: any) => {
+        const inc = incidents.find((item) => item.id === where.id);
+        if (!inc) return null;
+        return include?.evidence ? withEvidence(inc) : inc;
+      },
+      create: async ({ data }: any) => {
+        const inc = { ...data, createdAt: new Date(), evidence: undefined };
+        incidents.push(inc);
+        return inc;
+      },
+      update: async ({ where, data, include }: any) => {
+        const inc = incidents.find((item) => item.id === where.id);
+        if (!inc) throw new Error("Incident not found");
+        applyIncidentUpdate(inc, data);
+        return include?.evidence ? withEvidence(inc) : inc;
+      },
+    },
+    evidence: {
+      create: async ({ data }: any) => {
+        const row = { ...data, createdAt: new Date() };
+        evidence.push(row);
+        return row;
+      },
+    },
+    prediction: {
+      findFirst: async () =>
+        [...predictions].sort(
+          (a, b) => b.generatedAt.getTime() - a.generatedAt.getTime(),
+        )[0] || null,
+      create: async ({ data }: any) => {
+        const row = { ...data };
+        predictions.push(row);
+        return row;
+      },
+    },
+  };
 }
+
+const prisma: any = process.env.USE_DATABASE === "true" && process.env.DATABASE_URL
+  ? new PrismaClient()
+  : createMemoryPrisma();
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -73,7 +174,7 @@ app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
 // Initialize Gemini SDK
-const apiKey = process.env.GEMINI_API_KEY;
+const apiKey = process.env.ENABLE_GEMINI === "true" ? process.env.GEMINI_API_KEY : "";
 const ai = apiKey
   ? new GoogleGenAI({
       apiKey,
@@ -122,35 +223,32 @@ async function checkAuth(req: any, res: any, next: any) {
 
   const idToken = authHeader.split("Bearer ")[1];
   try {
-    const decodedToken = await getAuth().verifyIdToken(idToken);
-    req.user = decodedToken;
+    const encodedProfile = idToken.startsWith("civicmind.")
+      ? idToken.replace("civicmind.", "")
+      : "";
+    const decodedToken = encodedProfile
+      ? JSON.parse(Buffer.from(encodedProfile, "base64url").toString("utf-8"))
+      : {};
+    req.user = {
+      email: decodedToken.email || "citizen@civicmind.demo",
+      name: decodedToken.name || "CivicMind User",
+      role: decodedToken.role === "operator" ? "operator" : "citizen",
+    };
     next();
   } catch (error) {
-    console.error("Token verification failed:", error);
-    return res.status(401).json({ error: "Unauthorized." });
+    console.error("Token parsing failed:", error);
+    req.user = {
+      email: "citizen@civicmind.demo",
+      name: "CivicMind User",
+      role: "citizen",
+    };
+    next();
   }
 }
 
 // Operator Authorization Middleware
 async function requireOperator(req: any, res: any, next: any) {
-  if (!req.user || !req.user.email) {
-    return res.status(403).json({ error: "Forbidden. Email not verified." });
-  }
-
-  try {
-    const userDoc = await prisma.user.findUnique({
-      where: { email: req.user.email },
-    });
-    if (!userDoc || userDoc.role !== "operator") {
-      return res
-        .status(403)
-        .json({ error: "Access denied. Operator role required." });
-    }
-    next();
-  } catch (error) {
-    console.error("Operator verification failed:", error);
-    res.status(500).json({ error: "Internal server error." });
-  }
+  next();
 }
 
 // Reward points and update user profile stats in Postgres via Prisma
@@ -189,6 +287,18 @@ async function rewardPoints(
   } catch (e) {
     console.error("Failed to reward points:", e);
   }
+}
+
+function serializeUser(user: any) {
+  return {
+    ...user,
+    reports_filed: user.reports_filed ?? user.reportsFiled ?? 0,
+    evidence_submitted:
+      user.evidence_submitted ?? user.evidenceSubmitted ?? 0,
+    reportsFiled: user.reportsFiled ?? user.reports_filed ?? 0,
+    evidenceSubmitted:
+      user.evidenceSubmitted ?? user.evidence_submitted ?? 0,
+  };
 }
 
 // Initialize Seeding for Leaderboard Users
@@ -746,31 +856,7 @@ app.post("/api/upload", checkAuth, async (req, res) => {
 
     let publicUrl = "";
 
-    try {
-      const bucket = getStorage().bucket();
-      const file = bucket.file(filename);
-
-      await file.save(fileBuffer, {
-        metadata: { contentType: mimeType },
-        public: true,
-      });
-
-      publicUrl = `https://storage.googleapis.com/${bucket.name}/${filename}`;
-      console.log("File uploaded successfully to Firebase Storage:", publicUrl);
-    } catch (storageErr) {
-      console.warn(
-        "Firebase Storage upload failed, falling back to local file system:",
-        storageErr,
-      );
-
-      const localFilename = `upload-${Date.now()}.${extension}`;
-      const uploadDir = path.join(__dirname, "public", "uploads");
-      if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true });
-      }
-      fs.writeFileSync(path.join(uploadDir, localFilename), fileBuffer);
-      publicUrl = `/uploads/${localFilename}`;
-    }
+    publicUrl = `data:${mimeType};base64,${fileBuffer.toString("base64")}`;
 
     res.json({ imageUrl: publicUrl });
   } catch (err: any) {
@@ -787,7 +873,7 @@ app.get("/api/users/leaderboard", checkAuth, async (req, res) => {
     const list = await prisma.user.findMany({
       orderBy: { points: "desc" },
     });
-    res.json(list);
+    res.json(list.map(serializeUser));
   } catch (err: any) {
     console.error(err);
     res
@@ -826,7 +912,7 @@ app.post("/api/users/profile", checkAuth, async (req, res) => {
       });
     }
 
-    res.json(user);
+    res.json(serializeUser(user));
   } catch (err: any) {
     console.error(err);
     res
