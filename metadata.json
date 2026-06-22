@@ -1,0 +1,6 @@
+{
+  "name": "CivicMind",
+  "description": "CivicMind is an AI-powered civic operations platform that transforms citizen issue reporting into an autonomous infrastructure management workflow.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
