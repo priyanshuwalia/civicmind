@@ -15,29 +15,39 @@ const firebaseAdmin: any = admin;
 const prisma = new PrismaClient();
 
 // Initialize Firebase Admin SDK for Authentication & Image Uploads
-const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
-if (serviceAccount) {
-  try {
-    const cert = JSON.parse(serviceAccount);
+if (firebaseAdmin.apps.length === 0) {
+  const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (serviceAccount) {
+    try {
+      const cert = JSON.parse(serviceAccount);
+      firebaseAdmin.initializeApp({
+        credential: firebaseAdmin.credential.cert(cert),
+        storageBucket: process.env.FIREBASE_STORAGE_BUCKET || (cert.project_id ? `${cert.project_id}.appspot.com` : undefined),
+      });
+      console.log("Firebase Admin initialized via service account.");
+    } catch (err) {
+      console.error("Failed to parse FIREBASE_SERVICE_ACCOUNT JSON, fallback to default credentials:", err);
+      try {
+        firebaseAdmin.initializeApp({
+          credential: firebaseAdmin.credential.applicationDefault(),
+          projectId: process.env.VITE_FIREBASE_PROJECT_ID || "mock-project",
+          storageBucket: process.env.FIREBASE_STORAGE_BUCKET
+        });
+      } catch (innerErr) {
+        console.error("Firebase fallback initialization failed, using default credentials config:", innerErr);
+        firebaseAdmin.initializeApp({
+          projectId: process.env.VITE_FIREBASE_PROJECT_ID || "mock-project",
+          storageBucket: process.env.FIREBASE_STORAGE_BUCKET
+        });
+      }
+    }
+  } else {
     firebaseAdmin.initializeApp({
-      credential: firebaseAdmin.credential.cert(cert),
-      storageBucket: process.env.FIREBASE_STORAGE_BUCKET || (cert.project_id ? `${cert.project_id}.appspot.com` : undefined),
-    });
-    console.log("Firebase Admin initialized via service account.");
-  } catch (err) {
-    console.error("Failed to parse FIREBASE_SERVICE_ACCOUNT JSON, fallback to default credentials:", err);
-    firebaseAdmin.initializeApp({
-      credential: firebaseAdmin.credential.applicationDefault(),
       projectId: process.env.VITE_FIREBASE_PROJECT_ID || "mock-project",
       storageBucket: process.env.FIREBASE_STORAGE_BUCKET
     });
+    console.log("Firebase Admin initialized via default / project ID.");
   }
-} else {
-  firebaseAdmin.initializeApp({
-    projectId: process.env.VITE_FIREBASE_PROJECT_ID || "mock-project",
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET
-  });
-  console.log("Firebase Admin initialized via default / project ID.");
 }
 
 const app = express();
