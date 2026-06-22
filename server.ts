@@ -1,10 +1,11 @@
 import express from "express";
+import cors from "cors";
 import path from "path";
 import fs from "fs";
 import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
 
-import { Incident, PredictionData } from "./src/types";
+import type { Incident } from "./src/types";
 // @ts-ignore
 import admin from "firebase-admin";
 import { PrismaClient } from "@prisma/client";
@@ -59,8 +60,9 @@ if (firebaseAdmin.apps.length === 0) {
 }
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3000);
 
+app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
 // Initialize Gemini SDK
@@ -75,6 +77,32 @@ const ai = apiKey
       },
     })
   : null;
+
+let dbInitPromise: Promise<void> | null = null;
+
+export function ensureDbInitialized() {
+  if (!dbInitPromise) {
+    dbInitPromise = initDb().catch((error) => {
+      dbInitPromise = null;
+      throw error;
+    });
+  }
+
+  return dbInitPromise;
+}
+
+app.use("/api", async (_req, res, next) => {
+  try {
+    await ensureDbInitialized();
+    next();
+  } catch (error: any) {
+    console.error("Database initialization failed:", error);
+    res.status(500).json({
+      error: "Database initialization failed",
+      details: error?.message || "Unknown database error",
+    });
+  }
+});
 
 // Firebase Authentication Middleware
 async function checkAuth(req: any, res: any, next: any) {
@@ -1608,7 +1636,7 @@ app.post(
 
 // Vite Server Configuration in dev mode, static serving in prod
 async function startServer() {
-  await initDb();
+  await ensureDbInitialized();
 
   const isProd = process.env.NODE_ENV === "production";
   if (!isProd) {
@@ -1640,9 +1668,13 @@ async function startServer() {
     });
   } else {
     // Serve static frontend files
-    app.use(express.static(path.join(__dirname, "dist")));
+    const staticDir = fs.existsSync(path.join(__dirname, "index.html"))
+      ? __dirname
+      : path.join(__dirname, "dist");
+
+    app.use(express.static(staticDir));
     app.get("*", (req, res) => {
-      res.sendFile(path.join(__dirname, "dist", "index.html"));
+      res.sendFile(path.join(staticDir, "index.html"));
     });
   }
 
@@ -1652,9 +1684,10 @@ async function startServer() {
 }
 
 if (!process.env.VERCEL) {
-  startServer();
-} else {
-  initDb();
+  startServer().catch((error) => {
+    console.error("Failed to start CivicMind server:", error);
+    process.exit(1);
+  });
 }
 
 export default app;
