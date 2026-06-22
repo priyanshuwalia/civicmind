@@ -1,5 +1,6 @@
 import React from "react";
 import { Incident } from "../types";
+import { auth } from "../firebase";
 import {
   PlusCircle,
   MapPin,
@@ -118,7 +119,12 @@ export default function CitizenView({
   const fetchLeaderboard = async () => {
     setIsLoadingLeaderboard(true);
     try {
-      const res = await fetch("/api/users/leaderboard");
+      const token = await auth.currentUser?.getIdToken();
+      const res = await fetch("/api/users/leaderboard", {
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
       if (res.ok) {
         const data = await res.json();
         setLeaderboard(data);
@@ -156,10 +162,12 @@ export default function CitizenView({
     const uploadReader = new FileReader();
     uploadReader.onloadend = async () => {
       try {
+        const token = await auth.currentUser?.getIdToken();
         const response = await fetch("/api/upload", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
           },
           body: JSON.stringify({ image: uploadReader.result }),
         });
@@ -586,47 +594,7 @@ export default function CitizenView({
                     <p className="text-[10px] text-slate-400 font-mono">{currentUser.email}</p>
                   </div>
                 </div>
-                <button
-                  onClick={() => setIsEditingProfile(!isEditingProfile)}
-                  className="px-2.5 py-1 text-[10px] font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded hover:bg-slate-100 cursor-pointer active:scale-95"
-                >
-                  {isEditingProfile ? "Cancel" : "Change User"}
-                </button>
               </div>
-
-              {/* Editing user profile inside dashboard */}
-              {isEditingProfile && (
-                <form onSubmit={handleProfileUpdateSubmit} className="bg-slate-50 border border-slate-150 p-3 rounded-lg space-y-2.5">
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Profile Name</label>
-                      <input
-                        type="text"
-                        required
-                        value={profileForm.name}
-                        onChange={(e) => setProfileForm(prev => ({ ...prev, name: e.target.value }))}
-                        className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-slate-400"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Profile Email</label>
-                      <input
-                        type="email"
-                        required
-                        value={profileForm.email}
-                        onChange={(e) => setProfileForm(prev => ({ ...prev, email: e.target.value }))}
-                        className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-slate-400"
-                      />
-                    </div>
-                  </div>
-                  <button
-                    type="submit"
-                    className="w-full py-1 bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] rounded cursor-pointer transition-colors"
-                  >
-                    Sync Profile
-                  </button>
-                </form>
-              )}
 
               {/* Glassmorphic League Gradient card */}
               <div className={`p-4 rounded-xl bg-gradient-to-br ${league.color} border shadow-md flex items-center justify-between`}>

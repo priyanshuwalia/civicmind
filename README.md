@@ -9,44 +9,48 @@ The platform uses an open-source, keyless **Leaflet Maps API** (with OpenStreetM
 
 ## 🚀 Key Features
 
+* **Authenticated Contribution Security**: Secure Login & Signup gate using Firebase Authentication. Users choose Citizen or Operator roles which authorize their portal visibility.
 * **Zero-Friction Reporting**: Citizens double-click or tap on the map to place a pin, write a brief description in natural language, and submit.
 * **Leaflet + OSM Tiles Map**: Center automatically at the user's current location, drop pins, and render predictive failure circles without needing proprietary maps keys.
 * **Geocoding Support**: Asynchronously queries OpenStreetMap's Nominatim reverse-geocoder on map clicks to resolve coordinates into readable street addresses.
-* **Multi-Agent Orchestrator**: Sequentially chains 6 agents:
-  1. **Intake Agent**: Classifies issue domain and extracts initial hazard severity.
-  2. **Verification Agent**: Identifies nearby duplicate tickets and tracks verification confidence.
-  3. **Impact Agent**: Measures demographic/proximity footprints (e.g. distance to schools or hospitals).
-  4. **Prioritization Agent**: Runs a composite priority calculation to rank tickets (Low, Medium, High, Critical).
-  5. **Resolution Agent**: Directs tickets to municipal departments and generates action lists, durations, and cost estimates.
-  6. **Prediction Agent**: Clusters incidents to model future asset failure zones.
-* **Persistent PostgreSQL Backend**: Connects to a live database storing all incidents, evidence comments, and predictions.
+* **Multi-Agent Orchestrator**: Sequentially chains 6 agents (Intake, Verification, Impact, Prioritization, Resolution, Prediction) on incident tickets.
+* **Firebase Firestore & Storage Integration**: Fast cloud storage for images and document records, replacing local filesystem uploads and PostgreSQL databases.
+* **Gamified Citizen Leagues**: Track contributions dynamically (Bronze, Silver, Gold, Platinum, Diamond) based on submissions, evidence logs, and verification votes.
 
 ---
 
 ## 🛠️ Tech Stack
 
-* **Frontend**: React 19, Vite, Tailwind CSS, Lucide icons.
+* **Frontend**: React 19, Vite, Tailwind CSS, Lucide icons, Firebase Client SDK (Auth).
 * **Mapping**: Leaflet Maps API, OpenStreetMap, Nominatim reverse-geocoding.
-* **Backend**: Express, Node.js, tsx.
-* **Database**: PostgreSQL (Docker-based), pg client.
+* **Backend**: Express, Node.js, tsx, Firebase Admin SDK.
+* **Database & Cloud Storage**: Firebase Firestore, Firebase Storage.
 * **AI Model Orchestration**: Vertex AI / Gemini SDK (`gemini-3.5-flash`).
 
 ---
 
 ## 📋 Environment Variables
 
-A `.env.example` file is included in the project. Create a `.env.local` (for development) or `.env` file in the root directory and define the following variables:
+A `.env.example` file is included in the project. Create a `.env` file in the root directory and define the following variables:
 
 ```bash
-# GEMINI_API_KEY: Obtain from Google AI Studio. 
-# If not provided, the backend falls back to simulated agent responses.
+# GEMINI_API_KEY: Obtain from Google AI Studio.
 GEMINI_API_KEY="your_gemini_api_key_here"
 
 # APP_URL: The URL where the client and server are hosted.
 APP_URL="http://localhost:3000"
 
-# DATABASE_URL: Local PostgreSQL database connection URI.
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/civicmind"
+# FIREBASE SERVICE ACCOUNT (Server configuration)
+FIREBASE_SERVICE_ACCOUNT='{"type": "service_account", "project_id": "...", ...}'
+FIREBASE_STORAGE_BUCKET="your-project-id.appspot.com"
+
+# FIREBASE CLIENT WEB CONFIGURATION (Frontend configuration)
+VITE_FIREBASE_API_KEY="your-api-key"
+VITE_FIREBASE_AUTH_DOMAIN="your-project-id.firebaseapp.com"
+VITE_FIREBASE_PROJECT_ID="your-project-id"
+VITE_FIREBASE_STORAGE_BUCKET="your-project-id.appspot.com"
+VITE_FIREBASE_MESSAGING_SENDER_ID="your-messaging-sender-id"
+VITE_FIREBASE_APP_ID="your-app-id"
 ```
 
 ---
@@ -57,7 +61,10 @@ Follow these steps to set up and launch CivicMind on your local computer.
 
 ### Prerequisites
 * **Node.js** (v18 or higher recommended)
-* **Docker Engine** (for running PostgreSQL)
+* **Firebase Project**: Create a free project in the Firebase Console.
+  * Enable **Authentication** (Email/Password provider).
+  * Enable **Firestore Database**.
+  * Enable **Cloud Storage**.
 * **Git**
 
 ---
@@ -69,54 +76,24 @@ git init
 npm install
 ```
 
-### Step 2: Set Up the PostgreSQL Database
-Launch a PostgreSQL instance in Docker. This exposes the database on port `5432` with username `postgres`, password `postgres`, and database name `civicmind`:
+### Step 2: Configure Environment Variables
+Create a file named `.env` in the project root:
 ```bash
-docker run -d \
-  --name civicmind-postgres \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=civicmind \
-  -p 5432:5432 \
-  postgres:15
+cp .env.example .env
 ```
+1. Open the `.env` file.
+2. Under Firebase Console -> Project Settings -> General -> Your Apps, click **Web App** (or create one) to copy the VITE_FIREBASE Client Configuration keys.
+3. Under Project Settings -> Service Accounts, click **Generate new private key**. Convert the generated JSON file contents into a single line string and paste it into the `FIREBASE_SERVICE_ACCOUNT` value.
 
-You can check that the container is running by typing:
-```bash
-docker ps
-```
-
-### Step 3: Configure Environment Variables
-Create a file named `.env.local` in the project root:
-```bash
-cp .env.example .env.local
-```
-Open `.env.local` and paste your Google Gemini API key into the `GEMINI_API_KEY` slot.
-
-### Step 4: Run the Development Server
+### Step 3: Run the Development Server
 Launch the application:
 ```bash
 npm run dev
 ```
 
-* The server will boot, connect to PostgreSQL, and automatically run `initDb()` which:
-  1. Creates the necessary tables (`incidents`, `evidence`, and `predictions`).
-  2. Seeds initial incidents and predicted failure zones if the database is blank.
+* The server will boot, initialize Firebase Firestore/Storage, and seed initial competitor users for the leaderboard.
 * Open your browser and navigate to **[http://localhost:3000](http://localhost:3000)**.
-* Grant location permissions when prompted to center the map at your current location.
-
-### Step 5: Test the System End-to-End
-1. **Citizen Submission**:
-   * Navigate to the **Citizen Portal** in the navigation toggle.
-   * Go to "File New Complaint".
-   * Click "Pick on Map" and click a point on the map. Verify that the address text field updates with your correct street name.
-   * Enter a headline (e.g. "Pavement buckling near school") and details, then click "Launch AI Intake Agent Analysis".
-2. **AI Orchestration**:
-   * Toggle to the **Control Tower** role in the navigation bar.
-   * Click your newly submitted incident in the list.
-   * Click **Run Agentic Pipeline** to execute the multi-agent cascade. Watch the live thought panel reveal the reasoning of the Intake, Verification, Impact, Prioritization, and Resolution agents.
-3. **Operator Overrides**:
-   * Inspect the auto-generated dispatch plans and budget estimates. Override the priority rank or department and click **Approve Dispatch**. The status will persist as `RESOLVING` in PostgreSQL.
+* Register or log in to access the portal views.
 
 ---
 
@@ -131,3 +108,4 @@ Verify type-safety by running typecheck:
 ```bash
 npm run lint
 ```
+
