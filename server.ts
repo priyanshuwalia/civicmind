@@ -7,12 +7,14 @@ import { createServer as createViteServer } from "vite";
 import { Incident, PredictionData } from "./src/types";
 // @ts-ignore
 import admin from "firebase-admin";
+import { PrismaClient } from "@prisma/client";
 
 dotenv.config();
 
 const firebaseAdmin: any = admin;
+const prisma = new PrismaClient();
 
-// Initialize Firebase Admin SDK
+// Initialize Firebase Admin SDK for Authentication & Image Uploads
 const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
 if (serviceAccount) {
   try {
@@ -37,8 +39,6 @@ if (serviceAccount) {
   });
   console.log("Firebase Admin initialized via default / project ID.");
 }
-
-const db = firebaseAdmin.firestore();
 
 const app = express();
 const PORT = 3000;
@@ -83,8 +83,10 @@ async function requireOperator(req: any, res: any, next: any) {
   }
 
   try {
-    const userDoc = await db.collection("users").doc(req.user.email).get();
-    if (!userDoc.exists || userDoc.data()?.role !== "operator") {
+    const userDoc = await prisma.user.findUnique({
+      where: { email: req.user.email }
+    });
+    if (!userDoc || userDoc.role !== "operator") {
       return res.status(403).json({ error: "Access denied. Operator role required." });
     }
     next();
@@ -94,63 +96,57 @@ async function requireOperator(req: any, res: any, next: any) {
   }
 }
 
-// Reward points and update user profile stats in Firestore
+// Reward points and update user profile stats in Postgres via Prisma
 async function rewardPoints(email: string, name: string, points: number, fieldToIncrement?: "reports_filed" | "evidence_submitted") {
   const avatar = `https://images.unsplash.com/photo-${1500000000000 + Math.floor(Math.random() * 5000000)}?auto=format&fit=crop&q=80&w=100`;
-  const userRef = db.collection("users").doc(email);
+
+  const dataToUpdate: any = {
+    points: { increment: points },
+    name: name
+  };
+  if (fieldToIncrement === "reports_filed") {
+    dataToUpdate.reportsFiled = { increment: 1 };
+  } else if (fieldToIncrement === "evidence_submitted") {
+    dataToUpdate.evidenceSubmitted = { increment: 1 };
+  }
 
   try {
-    await db.runTransaction(async (transaction) => {
-      const doc = await transaction.get(userRef);
-      if (!doc.exists) {
-        transaction.set(userRef, {
-          email,
-          name,
-          avatar,
-          points: points,
-          reports_filed: fieldToIncrement === "reports_filed" ? 1 : 0,
-          evidence_submitted: fieldToIncrement === "evidence_submitted" ? 1 : 0,
-          role: "citizen"
-        });
-      } else {
-        const data = doc.data() || {};
-        const updates: any = {
-          points: (data.points || 0) + points,
-          name: name // sync name
-        };
-        if (fieldToIncrement === "reports_filed") {
-          updates.reports_filed = (data.reports_filed || 0) + 1;
-        } else if (fieldToIncrement === "evidence_submitted") {
-          updates.evidence_submitted = (data.evidence_submitted || 0) + 1;
-        }
-        transaction.update(userRef, updates);
+    await prisma.user.upsert({
+      where: { email },
+      update: dataToUpdate,
+      create: {
+        email,
+        name,
+        avatar,
+        points: points,
+        reportsFiled: fieldToIncrement === "reports_filed" ? 1 : 0,
+        evidenceSubmitted: fieldToIncrement === "evidence_submitted" ? 1 : 0,
+        role: "citizen"
       }
     });
   } catch (e) {
-    console.error("Failed to reward points in transaction:", e);
+    console.error("Failed to reward points:", e);
   }
 }
 
 // Initialize Seeding for Leaderboard Users
 async function initDb() {
   try {
-    const usersSnapshot = await db.collection("users").limit(1).get();
-    if (usersSnapshot.empty) {
-      console.log("Seeding competitor profiles into Firestore...");
+    const userCount = await prisma.user.count();
+    if (userCount === 0) {
+      console.log("Seeding competitor profiles into Prisma NeonDB...");
       const mockUsers = [
-        { email: "marcus@rome.net", name: "Marcus Aurelius", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=100", points: 820, reports_filed: 14, evidence_submitted: 22, role: "citizen" },
-        { email: "tesla@grid.com", name: "Johnny Tesla", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=100", points: 415, reports_filed: 6, evidence_submitted: 12, role: "citizen" },
-        { email: "clara@spokes.org", name: "Clara Cycle", avatar: "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&q=80&w=100", points: 120, reports_filed: 2, evidence_submitted: 4, role: "citizen" },
-        { email: "operator@civicmind.gov", name: "Sarah Operator", avatar: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=100", points: 0, reports_filed: 0, evidence_submitted: 0, role: "operator" }
+        { email: "marcus@rome.net", name: "Marcus Aurelius", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=100", points: 820, reportsFiled: 14, evidenceSubmitted: 22, role: "citizen" },
+        { email: "tesla@grid.com", name: "Johnny Tesla", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=100", points: 415, reportsFiled: 6, evidenceSubmitted: 12, role: "citizen" },
+        { email: "clara@spokes.org", name: "Clara Cycle", avatar: "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&q=80&w=100", points: 120, reportsFiled: 2, evidenceSubmitted: 4, role: "citizen" },
+        { email: "operator@civicmind.gov", name: "Sarah Operator", avatar: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=100", points: 0, reportsFiled: 0, evidenceSubmitted: 0, role: "operator" }
       ];
 
-      for (const u of mockUsers) {
-        await db.collection("users").doc(u.email).set(u);
-      }
-      console.log("Competitor profiles seeded in Firestore.");
+      await prisma.user.createMany({ data: mockUsers });
+      console.log("Competitor profiles seeded in NeonDB.");
     }
   } catch (err) {
-    console.error("Database initialization failed:", err);
+    console.error("Database seeding failed:", err);
   }
 }
 
@@ -584,12 +580,12 @@ app.post("/api/upload", checkAuth, async (req, res) => {
   }
 });
 
-// Gamification Leaderboard API
+// Gamification Leaderboard API via Prisma
 app.get("/api/users/leaderboard", checkAuth, async (req, res) => {
   try {
-    const snapshot = await db.collection("users").orderBy("points", "desc").get();
-    const list: any[] = [];
-    snapshot.forEach(doc => list.push(doc.data()));
+    const list = await prisma.user.findMany({
+      orderBy: { points: "desc" }
+    });
     res.json(list);
   } catch (err: any) {
     console.error(err);
@@ -597,7 +593,7 @@ app.get("/api/users/leaderboard", checkAuth, async (req, res) => {
   }
 });
 
-// User Profile Creation/Lookup API
+// User Profile Creation/Lookup API via Prisma
 app.post("/api/users/profile", checkAuth, async (req, res) => {
   const { email, name, role } = req.body;
   const userEmail = email || (req as any).user.email;
@@ -608,62 +604,112 @@ app.post("/api/users/profile", checkAuth, async (req, res) => {
   }
 
   try {
-    const userRef = db.collection("users").doc(userEmail);
-    const doc = await userRef.get();
+    let user = await prisma.user.findUnique({
+      where: { email: userEmail }
+    });
     
-    if (!doc.exists) {
+    if (!user) {
       const avatar = `https://images.unsplash.com/photo-${1500000000000 + Math.floor(Math.random() * 5000000)}?auto=format&fit=crop&q=80&w=100`;
-      const newUser = {
-        email: userEmail,
-        name: userName,
-        avatar,
-        points: 0,
-        reports_filed: 0,
-        evidence_submitted: 0,
-        role: role === "operator" ? "operator" : "citizen"
-      };
-      await userRef.set(newUser);
-      return res.json(newUser);
+      user = await prisma.user.create({
+        data: {
+          email: userEmail,
+          name: userName,
+          avatar,
+          points: 0,
+          reportsFiled: 0,
+          evidenceSubmitted: 0,
+          role: role === "operator" ? "operator" : "citizen"
+        }
+      });
     }
     
-    res.json(doc.data());
+    res.json(user);
   } catch (err: any) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch profile", details: err.message });
   }
 });
 
-// 1. Get all incidents
+// 1. Get all incidents via Prisma
 app.get("/api/incidents", checkAuth, async (req, res) => {
   try {
-    const snapshot = await db.collection("incidents").orderBy("createdAt", "desc").get();
-    const list: Incident[] = [];
-    snapshot.forEach(doc => {
-      const data = doc.data();
-      list.push(data as Incident);
+    const rawList = await prisma.incident.findMany({
+      include: { evidence: { orderBy: { createdAt: "asc" } } },
+      orderBy: { createdAt: "desc" }
     });
-    res.json(list);
+
+    const mapped = rawList.map(inc => ({
+      id: inc.id,
+      title: inc.title,
+      rawDescription: inc.rawDescription,
+      imageUrl: inc.imageUrl || undefined,
+      location: { lat: inc.lat, lng: inc.lng, address: inc.address },
+      reporter: { name: inc.reporterName, email: inc.reporterEmail, avatar: inc.reporterAvatar || undefined },
+      createdAt: inc.createdAt.toISOString(),
+      status: inc.status as any,
+      upvotes: inc.upvotes,
+      downvotes: inc.downvotes,
+      evidence: inc.evidence.map(ev => ({
+        id: ev.id,
+        author: ev.author,
+        text: ev.text,
+        createdAt: ev.createdAt.toISOString()
+      })),
+      intake: (inc.intake as any) || undefined,
+      verification: (inc.verification as any) || undefined,
+      impact: (inc.impact as any) || undefined,
+      prioritization: (inc.prioritization as any) || undefined,
+      resolution: (inc.resolution as any) || undefined
+    }));
+
+    res.json(mapped);
   } catch (err: any) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch incidents", details: err.message });
   }
 });
 
-// 2. Get single incident
+// 2. Get single incident via Prisma
 app.get("/api/incidents/:id", checkAuth, async (req, res) => {
   try {
-    const doc = await db.collection("incidents").doc(req.params.id).get();
-    if (!doc.exists) {
+    const inc = await prisma.incident.findUnique({
+      where: { id: req.params.id },
+      include: { evidence: { orderBy: { createdAt: "asc" } } }
+    });
+    if (!inc) {
       return res.status(404).json({ error: "Incident not found" });
     }
-    res.json(doc.data() as Incident);
+
+    res.json({
+      id: inc.id,
+      title: inc.title,
+      rawDescription: inc.rawDescription,
+      imageUrl: inc.imageUrl || undefined,
+      location: { lat: inc.lat, lng: inc.lng, address: inc.address },
+      reporter: { name: inc.reporterName, email: inc.reporterEmail, avatar: inc.reporterAvatar || undefined },
+      createdAt: inc.createdAt.toISOString(),
+      status: inc.status as any,
+      upvotes: inc.upvotes,
+      downvotes: inc.downvotes,
+      evidence: inc.evidence.map(ev => ({
+        id: ev.id,
+        author: ev.author,
+        text: ev.text,
+        createdAt: ev.createdAt.toISOString()
+      })),
+      intake: (inc.intake as any) || undefined,
+      verification: (inc.verification as any) || undefined,
+      impact: (inc.impact as any) || undefined,
+      prioritization: (inc.prioritization as any) || undefined,
+      resolution: (inc.resolution as any) || undefined
+    });
   } catch (err: any) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch incident", details: err.message });
   }
 });
 
-// 3. Create raw incident (Citizen Submission) - Rewards 20 points
+// 3. Create raw incident (Citizen Submission) via Prisma
 app.post("/api/incidents", checkAuth, async (req, res) => {
   const { title, rawDescription, address, lat, lng, reporterName, reporterEmail, imageUrl } = req.body;
 
@@ -678,65 +724,134 @@ app.post("/api/incidents", checkAuth, async (req, res) => {
   const name = reporterName || (req as any).user.name || "Anonymous Citizen";
   const email = reporterEmail || (req as any).user.email;
   const avatar = `https://images.unsplash.com/photo-${1500000000000 + Math.floor(Math.random() * 5000000)}?auto=format&fit=crop&q=80&w=100`;
-  const createdAt = new Date().toISOString();
   const status = "SUBMITTED";
 
   try {
-    const incident: Incident = {
-      id,
-      title,
-      rawDescription,
-      imageUrl: imageUrl || undefined,
-      location: { lat: latVal, lng: lngVal, address: addr },
-      reporter: { name, email, avatar },
-      createdAt,
-      status,
-      upvotes: 0,
-      downvotes: 0,
-      evidence: []
-    };
-
-    // Save incident
-    await db.collection("incidents").doc(id).set(incident);
+    const incident = await prisma.incident.create({
+      data: {
+        id,
+        title,
+        rawDescription,
+        imageUrl: imageUrl || null,
+        lat: latVal,
+        lng: lngVal,
+        address: addr,
+        reporterName: name,
+        reporterEmail: email,
+        reporterAvatar: avatar,
+        status,
+        upvotes: 0,
+        downvotes: 0
+      }
+    });
 
     // Reward points
     await rewardPoints(email, name, 20, "reports_filed");
 
-    res.status(201).json(incident);
+    res.status(201).json({
+      id: incident.id,
+      title: incident.title,
+      rawDescription: incident.rawDescription,
+      imageUrl: incident.imageUrl || undefined,
+      location: { lat: incident.lat, lng: incident.lng, address: incident.address },
+      reporter: { name: incident.reporterName, email: incident.reporterEmail, avatar: incident.reporterAvatar || undefined },
+      createdAt: incident.createdAt.toISOString(),
+      status: incident.status as any,
+      upvotes: incident.upvotes,
+      downvotes: incident.downvotes,
+      evidence: []
+    });
   } catch (err: any) {
     console.error(err);
     res.status(500).json({ error: "Failed to save incident", details: err.message });
   }
 });
 
-// 4. Run step-by-step agent workflow on an incident (Requires Operator role)
+// 4. Run step-by-step agent workflow on an incident via Prisma (Requires Operator role)
 app.post("/api/incidents/:id/analyze", checkAuth, requireOperator, async (req, res) => {
   try {
-    const incidentRef = db.collection("incidents").doc(req.params.id);
-    const incidentDoc = await incidentRef.get();
-    if (!incidentDoc.exists) {
+    const incidentDoc = await prisma.incident.findUnique({
+      where: { id: req.params.id },
+      include: { evidence: true }
+    });
+    if (!incidentDoc) {
       return res.status(404).json({ error: "Incident not found" });
     }
 
-    const currentIncident = incidentDoc.data() as Incident;
-    currentIncident.status = "ANALYZING";
-    await incidentRef.update({ status: "ANALYZING" });
+    await prisma.incident.update({
+      where: { id: incidentDoc.id },
+      data: { status: "ANALYZING" }
+    });
+
+    const currentIncident: Incident = {
+      id: incidentDoc.id,
+      title: incidentDoc.title,
+      rawDescription: incidentDoc.rawDescription,
+      imageUrl: incidentDoc.imageUrl || undefined,
+      location: { lat: incidentDoc.lat, lng: incidentDoc.lng, address: incidentDoc.address },
+      reporter: { name: incidentDoc.reporterName, email: incidentDoc.reporterEmail, avatar: incidentDoc.reporterAvatar || undefined },
+      createdAt: incidentDoc.createdAt.toISOString(),
+      status: "ANALYZING",
+      upvotes: incidentDoc.upvotes,
+      downvotes: incidentDoc.downvotes,
+      evidence: incidentDoc.evidence.map(ev => ({
+        id: ev.id,
+        author: ev.author,
+        text: ev.text,
+        createdAt: ev.createdAt.toISOString()
+      })),
+      intake: (incidentDoc.intake as any) || undefined,
+      verification: (incidentDoc.verification as any) || undefined,
+      impact: (incidentDoc.impact as any) || undefined,
+      prioritization: (incidentDoc.prioritization as any) || undefined,
+      resolution: (incidentDoc.resolution as any) || undefined
+    };
 
     // Get all OTHER incidents
-    const otherSnapshot = await db.collection("incidents").get();
-    const otherIncidents: Incident[] = [];
-    otherSnapshot.forEach(doc => {
-      const data = doc.data() as Incident;
-      if (data.id !== currentIncident.id) {
-        otherIncidents.push(data);
-      }
+    const rawOthers = await prisma.incident.findMany({
+      where: { id: { not: currentIncident.id } },
+      include: { evidence: true }
     });
+
+    const otherIncidents: Incident[] = rawOthers.map(inc => ({
+      id: inc.id,
+      title: inc.title,
+      rawDescription: inc.rawDescription,
+      imageUrl: inc.imageUrl || undefined,
+      location: { lat: inc.lat, lng: inc.lng, address: inc.address },
+      reporter: { name: inc.reporterName, email: inc.reporterEmail, avatar: inc.reporterAvatar || undefined },
+      createdAt: inc.createdAt.toISOString(),
+      status: inc.status as any,
+      upvotes: inc.upvotes,
+      downvotes: inc.downvotes,
+      evidence: inc.evidence.map(ev => ({
+        id: ev.id,
+        author: ev.author,
+        text: ev.text,
+        createdAt: ev.createdAt.toISOString()
+      })),
+      intake: (inc.intake as any) || undefined,
+      verification: (inc.verification as any) || undefined,
+      impact: (inc.impact as any) || undefined,
+      prioritization: (inc.prioritization as any) || undefined,
+      resolution: (inc.resolution as any) || undefined
+    }));
 
     // Run pipeline
     const updated = await runRealGeminiAgentPipeline(currentIncident, otherIncidents);
 
     // Update database record with outputs
-    await incidentRef.set(updated, { merge: true });
+    await prisma.incident.update({
+      where: { id: updated.id },
+      data: {
+        status: updated.status,
+        intake: updated.intake || null,
+        verification: updated.verification || null,
+        impact: updated.impact || null,
+        prioritization: updated.prioritization || null,
+        resolution: updated.resolution || null
+      }
+    });
 
     res.json(updated);
   } catch (err: any) {
@@ -745,41 +860,61 @@ app.post("/api/incidents/:id/analyze", checkAuth, requireOperator, async (req, r
   }
 });
 
-// 5. Citizen Upvote/Downvote Community Verification - Rewards 5 points to the voter
+// 5. Citizen Upvote/Downvote Community Verification via Prisma - Rewards 5 points to the voter
 app.post("/api/incidents/:id/vote", checkAuth, async (req, res) => {
   try {
     const { type, voterEmail, voterName } = req.body;
     const email = voterEmail || (req as any).user.email;
     const name = voterName || (req as any).user.name || "Anonymous Citizen";
 
-    const incidentRef = db.collection("incidents").doc(req.params.id);
-    const doc = await incidentRef.get();
-    if (!doc.exists) {
-      return res.status(404).json({ error: "Incident not found" });
+    const updateData: any = {};
+    if (type === "up") {
+      updateData.upvotes = { increment: 1 };
+    } else if (type === "down") {
+      updateData.downvotes = { increment: 1 };
     }
 
-    const increment = firebaseAdmin.firestore.FieldValue.increment(1);
-    if (type === "up") {
-      await incidentRef.update({ upvotes: increment });
-    } else if (type === "down") {
-      await incidentRef.update({ downvotes: increment });
-    }
+    const updated = await prisma.incident.update({
+      where: { id: req.params.id },
+      data: updateData,
+      include: { evidence: { orderBy: { createdAt: "asc" } } }
+    });
     
     // Reward points to voter
     if (email && name) {
       await rewardPoints(email, name, 5);
     }
 
-    // Fetch updated incident
-    const updatedDoc = await incidentRef.get();
-    res.json(updatedDoc.data() as Incident);
+    res.json({
+      id: updated.id,
+      title: updated.title,
+      rawDescription: updated.rawDescription,
+      imageUrl: updated.imageUrl || undefined,
+      location: { lat: updated.lat, lng: updated.lng, address: updated.address },
+      reporter: { name: updated.reporterName, email: updated.reporterEmail, avatar: updated.reporterAvatar || undefined },
+      createdAt: updated.createdAt.toISOString(),
+      status: updated.status as any,
+      upvotes: updated.upvotes,
+      downvotes: updated.downvotes,
+      evidence: updated.evidence.map(ev => ({
+        id: ev.id,
+        author: ev.author,
+        text: ev.text,
+        createdAt: ev.createdAt.toISOString()
+      })),
+      intake: (updated.intake as any) || undefined,
+      verification: (updated.verification as any) || undefined,
+      impact: (updated.impact as any) || undefined,
+      prioritization: (updated.prioritization as any) || undefined,
+      resolution: (updated.resolution as any) || undefined
+    });
   } catch (err: any) {
     console.error(err);
     res.status(500).json({ error: "Failed to register vote", details: err.message });
   }
 });
 
-// 6. Citizen Add Evidence / Comment - Rewards 10 points
+// 6. Citizen Add Evidence / Comment via Prisma - Rewards 10 points
 app.post("/api/incidents/:id/evidence", checkAuth, async (req, res) => {
   const { author, text, commenterEmail } = req.body;
   if (!author || !text) {
@@ -787,46 +922,90 @@ app.post("/api/incidents/:id/evidence", checkAuth, async (req, res) => {
   }
 
   const id = `ev-${Date.now()}`;
-  const createdAt = new Date().toISOString();
   const email = commenterEmail || (req as any).user.email;
   const authorName = author || (req as any).user.name || "Anonymous Citizen";
 
   try {
-    const incidentRef = db.collection("incidents").doc(req.params.id);
-    const incidentDoc = await incidentRef.get();
-    if (!incidentDoc.exists) {
-      return res.status(404).json({ error: "Incident not found" });
-    }
-
-    const newEvidence = { id, author: authorName, text, createdAt };
-
-    // Append to array
-    await incidentRef.update({
-      evidence: firebaseAdmin.firestore.FieldValue.arrayUnion(newEvidence)
+    await prisma.evidence.create({
+      data: {
+        id,
+        incidentId: req.params.id,
+        author: authorName,
+        text
+      }
     });
 
     // Reward points to commenter
     await rewardPoints(email, authorName, 10, "evidence_submitted");
 
     // Fetch updated incident
-    const updatedDoc = await incidentRef.get();
-    res.status(201).json(updatedDoc.data() as Incident);
+    const updated = await prisma.incident.findUnique({
+      where: { id: req.params.id },
+      include: { evidence: { orderBy: { createdAt: "asc" } } }
+    });
+
+    if (!updated) {
+      return res.status(404).json({ error: "Incident not found" });
+    }
+
+    res.status(201).json({
+      id: updated.id,
+      title: updated.title,
+      rawDescription: updated.rawDescription,
+      imageUrl: updated.imageUrl || undefined,
+      location: { lat: updated.lat, lng: updated.lng, address: updated.address },
+      reporter: { name: updated.reporterName, email: updated.reporterEmail, avatar: updated.reporterAvatar || undefined },
+      createdAt: updated.createdAt.toISOString(),
+      status: updated.status as any,
+      upvotes: updated.upvotes,
+      downvotes: updated.downvotes,
+      evidence: updated.evidence.map(ev => ({
+        id: ev.id,
+        author: ev.author,
+        text: ev.text,
+        createdAt: ev.createdAt.toISOString()
+      })),
+      intake: (updated.intake as any) || undefined,
+      verification: (updated.verification as any) || undefined,
+      impact: (updated.impact as any) || undefined,
+      prioritization: (updated.prioritization as any) || undefined,
+      resolution: (updated.resolution as any) || undefined
+    });
   } catch (err: any) {
     console.error(err);
     res.status(500).json({ error: "Failed to add evidence", details: err.message });
   }
 });
 
-// 7. Municipal Operator Approval / Priority and Department Overrides (Requires Operator role)
+// 7. Municipal Operator Overrides via Prisma (Requires Operator role)
 app.post("/api/incidents/:id/operate", checkAuth, requireOperator, async (req, res) => {
   try {
-    const incidentRef = db.collection("incidents").doc(req.params.id);
-    const incidentDoc = await incidentRef.get();
-    if (!incidentDoc.exists) {
+    const incidentDoc = await prisma.incident.findUnique({
+      where: { id: req.params.id }
+    });
+    if (!incidentDoc) {
       return res.status(404).json({ error: "Incident not found" });
     }
     
-    const currentIncident = incidentDoc.data() as Incident;
+    const currentIncident: Incident = {
+      id: incidentDoc.id,
+      title: incidentDoc.title,
+      rawDescription: incidentDoc.rawDescription,
+      imageUrl: incidentDoc.imageUrl || undefined,
+      location: { lat: incidentDoc.lat, lng: incidentDoc.lng, address: incidentDoc.address },
+      reporter: { name: incidentDoc.reporterName, email: incidentDoc.reporterEmail, avatar: incidentDoc.reporterAvatar || undefined },
+      createdAt: incidentDoc.createdAt.toISOString(),
+      status: incidentDoc.status as any,
+      upvotes: incidentDoc.upvotes,
+      downvotes: incidentDoc.downvotes,
+      evidence: [],
+      intake: (incidentDoc.intake as any) || undefined,
+      verification: (incidentDoc.verification as any) || undefined,
+      impact: (incidentDoc.impact as any) || undefined,
+      prioritization: (incidentDoc.prioritization as any) || undefined,
+      resolution: (incidentDoc.resolution as any) || undefined
+    };
+
     const { priorityRank, department, estimatedCost, estimatedDuration, status, approveAction } = req.body;
 
     if (currentIncident.resolution) {
@@ -858,21 +1037,53 @@ app.post("/api/incidents/:id/operate", checkAuth, requireOperator, async (req, r
       currentIncident.status = status;
     }
 
-    // Save operator edits to DB
-    await incidentRef.set(currentIncident, { merge: true });
+    // Save operator edits via Prisma
+    const updated = await prisma.incident.update({
+      where: { id: currentIncident.id },
+      data: {
+        status: currentIncident.status,
+        prioritization: currentIncident.prioritization || null,
+        resolution: currentIncident.resolution || null
+      },
+      include: { evidence: { orderBy: { createdAt: "asc" } } }
+    });
 
-    res.json(currentIncident);
+    res.json({
+      id: updated.id,
+      title: updated.title,
+      rawDescription: updated.rawDescription,
+      imageUrl: updated.imageUrl || undefined,
+      location: { lat: updated.lat, lng: updated.lng, address: updated.address },
+      reporter: { name: updated.reporterName, email: updated.reporterEmail, avatar: updated.reporterAvatar || undefined },
+      createdAt: updated.createdAt.toISOString(),
+      status: updated.status as any,
+      upvotes: updated.upvotes,
+      downvotes: updated.downvotes,
+      evidence: updated.evidence.map(ev => ({
+        id: ev.id,
+        author: ev.author,
+        text: ev.text,
+        createdAt: ev.createdAt.toISOString()
+      })),
+      intake: (updated.intake as any) || undefined,
+      verification: (updated.verification as any) || undefined,
+      impact: (updated.impact as any) || undefined,
+      prioritization: (updated.prioritization as any) || undefined,
+      resolution: (updated.resolution as any) || undefined
+    });
   } catch (err: any) {
     console.error(err);
     res.status(500).json({ error: "Failed to save adjustments", details: err.message });
   }
 });
 
-// 8. Get Predictions / Hotspots Risk (Prediction Agent) -> Firestore
+// 8. Get Predictions via Prisma
 app.get("/api/predictions", checkAuth, async (req, res) => {
   try {
-    const snapshot = await db.collection("predictions").orderBy("generatedAt", "desc").limit(1).get();
-    if (snapshot.empty) {
+    const latest = await prisma.prediction.findFirst({
+      orderBy: { generatedAt: "desc" }
+    });
+    if (!latest) {
       return res.json({
         risk_zones: [],
         predicted_failures: [],
@@ -880,20 +1091,41 @@ app.get("/api/predictions", checkAuth, async (req, res) => {
         generatedAt: new Date().toISOString()
       });
     }
-    const doc = snapshot.docs[0];
-    res.json(doc.data());
+    res.json({
+      confidence_scores: latest.confidenceScores,
+      generatedAt: latest.generatedAt.toISOString(),
+      agentThought: latest.agentThought || undefined,
+      risk_zones: latest.riskZones,
+      predicted_failures: latest.predictedFailures
+    });
   } catch (err: any) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch predictions", details: err.message });
   }
 });
 
-// 9. Force Regenerate Predictions (Prediction Agent call to Gemini) (Requires Operator role)
+// 9. Force Regenerate Predictions (Prediction Agent call to Gemini) via Prisma (Requires Operator role)
 app.post("/api/predictions/regenerate", checkAuth, requireOperator, async (req, res) => {
   try {
-    const incidentsSnapshot = await db.collection("incidents").get();
-    const mappedIncidents: Incident[] = [];
-    incidentsSnapshot.forEach(doc => mappedIncidents.push(doc.data() as Incident));
+    const incidentsSnapshot = await prisma.incident.findMany();
+    const mappedIncidents: Incident[] = incidentsSnapshot.map(inc => ({
+      id: inc.id,
+      title: inc.title,
+      rawDescription: inc.rawDescription,
+      imageUrl: inc.imageUrl || undefined,
+      location: { lat: inc.lat, lng: inc.lng, address: inc.address },
+      reporter: { name: inc.reporterName, email: inc.reporterEmail, avatar: inc.reporterAvatar || undefined },
+      createdAt: inc.createdAt.toISOString(),
+      status: inc.status as any,
+      upvotes: inc.upvotes,
+      downvotes: inc.downvotes,
+      evidence: [],
+      intake: (inc.intake as any) || undefined,
+      verification: (inc.verification as any) || undefined,
+      impact: (inc.impact as any) || undefined,
+      prioritization: (inc.prioritization as any) || undefined,
+      resolution: (inc.resolution as any) || undefined
+    }));
 
     const listSummary = mappedIncidents
       .map(inc => `ID: ${inc.id}, Category: ${inc.intake?.issue_type || "Unknown"}, Address: ${inc.location.address}, Severity: ${inc.intake?.severity || "Unknown"}`)
@@ -902,8 +1134,9 @@ app.post("/api/predictions/regenerate", checkAuth, requireOperator, async (req, 
     let finalPredictionData;
 
     if (!ai) {
-      const predSnapshot = await db.collection("predictions").orderBy("generatedAt", "desc").limit(1).get();
-      const existing = !predSnapshot.empty ? predSnapshot.docs[0].data() : null;
+      const existing = await prisma.prediction.findFirst({
+        orderBy: { generatedAt: "desc" }
+      });
 
       finalPredictionData = {
         confidence_scores: 0.88,
@@ -1033,7 +1266,16 @@ app.post("/api/predictions/regenerate", checkAuth, requireOperator, async (req, 
     }
 
     const predId = `pred-${Date.now()}`;
-    await db.collection("predictions").doc(predId).set(finalPredictionData);
+    await prisma.prediction.create({
+      data: {
+        id: predId,
+        confidenceScores: finalPredictionData.confidence_scores,
+        generatedAt: new Date(finalPredictionData.generatedAt),
+        agentThought: finalPredictionData.agentThought || null,
+        riskZones: finalPredictionData.risk_zones,
+        predictedFailures: finalPredictionData.predicted_failures
+      }
+    });
 
     res.json(finalPredictionData);
   } catch (err: any) {

@@ -1,0 +1,67 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  email             String   @id
+  name              String
+  avatar            String?
+  points            Int      @default(0)
+  reportsFiled      Int      @default(0) @map("reports_filed")
+  evidenceSubmitted Int      @default(0) @map("evidence_submitted")
+  role              String   @default("citizen")
+  
+  @@map("users")
+}
+
+model Incident {
+  id             String     @id
+  title          String
+  rawDescription String     @map("raw_description")
+  imageUrl       String?    @map("image_url")
+  lat            Float
+  lng            Float
+  address        String
+  reporterName   String     @map("reporter_name")
+  reporterEmail  String     @map("reporter_email")
+  reporterAvatar String?    @map("reporter_avatar")
+  createdAt      DateTime   @default(now()) @map("created_at")
+  status         String     @default("SUBMITTED")
+  upvotes        Int        @default(0)
+  downvotes      Int        @default(0)
+  intake         Json?
+  verification   Json?
+  impact         Json?
+  prioritization Json?
+  resolution     Json?
+  evidence       Evidence[]
+
+  @@map("incidents")
+}
+
+model Evidence {
+  id         String   @id
+  incidentId String   @map("incident_id")
+  incident   Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  author     String
+  text       String
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("evidence")
+}
+
+model Prediction {
+  id                String   @id
+  confidenceScores  Float    @map("confidence_scores")
+  generatedAt       DateTime @default(now()) @map("generated_at")
+  agentThought      String?  @map("agent_thought")
+  riskZones         Json     @map("risk_zones")
+  predictedFailures Json     @map("predicted_failures")
+
+  @@map("predictions")
+}
