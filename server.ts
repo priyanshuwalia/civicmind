@@ -6,25 +6,33 @@ import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
 
 import type { Incident } from "./src/types";
-import * as admin from "firebase-admin";
+import {
+  applicationDefault,
+  cert as firebaseCert,
+  getApps,
+  initializeApp,
+} from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
+import { getStorage } from "firebase-admin/storage";
 import { PrismaClient } from "@prisma/client";
 
 dotenv.config();
 
-const firebaseAdmin: any = (admin as any).default || admin;
 const prisma = new PrismaClient();
 
 // Initialize Firebase Admin SDK for Authentication & Image Uploads
-if (firebaseAdmin.apps.length === 0) {
+if (getApps().length === 0) {
   const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
   if (serviceAccount) {
     try {
-      const cert = JSON.parse(serviceAccount);
-      firebaseAdmin.initializeApp({
-        credential: firebaseAdmin.credential.cert(cert),
+      const serviceAccountCert = JSON.parse(serviceAccount);
+      initializeApp({
+        credential: firebaseCert(serviceAccountCert),
         storageBucket:
           process.env.FIREBASE_STORAGE_BUCKET ||
-          (cert.project_id ? `${cert.project_id}.appspot.com` : undefined),
+          (serviceAccountCert.project_id
+            ? `${serviceAccountCert.project_id}.appspot.com`
+            : undefined),
       });
       console.log("Firebase Admin initialized via service account.");
     } catch (err) {
@@ -33,8 +41,8 @@ if (firebaseAdmin.apps.length === 0) {
         err,
       );
       try {
-        firebaseAdmin.initializeApp({
-          credential: firebaseAdmin.credential.applicationDefault(),
+        initializeApp({
+          credential: applicationDefault(),
           projectId: process.env.VITE_FIREBASE_PROJECT_ID || "mock-project",
           storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
         });
@@ -43,14 +51,14 @@ if (firebaseAdmin.apps.length === 0) {
           "Firebase fallback initialization failed, using default credentials config:",
           innerErr,
         );
-        firebaseAdmin.initializeApp({
+        initializeApp({
           projectId: process.env.VITE_FIREBASE_PROJECT_ID || "mock-project",
           storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
         });
       }
     }
   } else {
-    firebaseAdmin.initializeApp({
+    initializeApp({
       projectId: process.env.VITE_FIREBASE_PROJECT_ID || "mock-project",
       storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
     });
@@ -114,7 +122,7 @@ async function checkAuth(req: any, res: any, next: any) {
 
   const idToken = authHeader.split("Bearer ")[1];
   try {
-    const decodedToken = await firebaseAdmin.auth().verifyIdToken(idToken);
+    const decodedToken = await getAuth().verifyIdToken(idToken);
     req.user = decodedToken;
     next();
   } catch (error) {
@@ -739,7 +747,7 @@ app.post("/api/upload", checkAuth, async (req, res) => {
     let publicUrl = "";
 
     try {
-      const bucket = firebaseAdmin.storage().bucket();
+      const bucket = getStorage().bucket();
       const file = bucket.file(filename);
 
       await file.save(fileBuffer, {
